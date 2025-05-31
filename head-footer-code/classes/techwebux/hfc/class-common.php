@@ -150,15 +150,22 @@ class Common {
 				),
 				// Allow <link> tags for CSS and preloading.
 				'link'     => array(
-					'href'          => true,
-					'rel'           => true,
-					'media'         => true,
-					'hreflang'      => true,
-					'type'          => true,
-					'sizes'         => true,
-					'title'         => true,
-					'fetchpriority' => true, // preload
-					'as'            => true, // preload
+					'href'           => true,
+					'rel'            => true,
+					'media'          => true,
+					'hreflang'       => true,
+					'type'           => true,
+					'sizes'          => true,
+					'title'          => true,
+					'fetchpriority'  => true, // preload
+					'as'             => true, // preload
+					'imagesrcset'    => true, // preload for images https://developer.mozilla.org/en-US/docs/Web/API/HTMLLinkElement/imageSrcset
+					'imagesizes'     => true, // preload for images https://developer.mozilla.org/en-US/docs/Web/API/HTMLLinkElement/imageSizes
+					'crossorigin'    => true, // security
+					'nonce'          => true, // security
+					'itemprop'       => true, // for structured data
+					'referrerpolicy' => true, // security
+					'integrity'      => true, // security
 				),
 				// Allow <meta> tags.
 				'meta'     => array(
@@ -242,6 +249,48 @@ class Common {
 			'i'        => true,
 		);
 	} // END public static function form_allowed_html
+
+	/**
+	 * Sanitize HTML code by temporarily removing
+	 * <script>...</script> and <style>...</style>
+	 * before filtering allowed HTML through wp_kses
+	 *
+	 * @param string $content
+	 * @return string Sanitized content (code inside SCRIPT and STYLE is untouched)
+	 */
+	public static function sanitize_html_with_scripts( $content ) {
+		$allowed_html = self::allowed_html();
+
+		$placeholders = array();
+
+		// Match <script>...</script>
+		if ( preg_match_all( '#<script\b[^>]*>.*?</script>#is', $content, $matches ) ) {
+			foreach ( $matches[0] as $i => $match ) {
+				$placeholder                  = "__TWU_SCRIPT_PLACEHOLDER_{$i}__";
+				$placeholders[ $placeholder ] = $match;
+				$content                      = str_replace( $match, $placeholder, $content );
+			}
+		}
+
+		// Match <style>...</style>
+		if ( preg_match_all( '#<style\b[^>]*>.*?</style>#is', $content, $matches ) ) {
+			foreach ( $matches[0] as $i => $match ) {
+				$placeholder                  = "__TWU_STYLE_PLACEHOLDER_{$i}__";
+				$placeholders[ $placeholder ] = $match;
+				$content                      = str_replace( $match, $placeholder, $content );
+			}
+		}
+
+		// Sanitize rest of content (outside scripts/styles)
+		$content = wp_kses( $content, $allowed_html );
+
+		// Restore script/style blocks
+		foreach ( $placeholders as $placeholder => $original ) {
+			$content = str_replace( $placeholder, $original, $content );
+		}
+
+		return $content;
+	}
 
 	/**
 	 * Get values of metabox fields
