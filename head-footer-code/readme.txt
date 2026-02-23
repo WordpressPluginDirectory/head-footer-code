@@ -4,8 +4,8 @@ Contributors: urkekg, techwebux
 Donate link: https://urosevic.net/wordpress/donate/?donate_for=head-footer-code
 Tags: head, body, footer, code, script
 Requires at least: 4.9
-Tested up to: 6.9
-Stable tag: 1.4.6
+Tested up to: 7.0
+Stable tag: 1.5.1
 Requires PHP: 5.5
 License: GPLv3
 License URI: http://www.gnu.org/licenses/gpl-3.0.html
@@ -71,7 +71,7 @@ If you find **Head &amp; Footer Code** useful for your project, please [review p
 
 ### Features
 
-* **Multisite** and **PHP 8.3** compatible!
+* **Multisite** and **PHP 8.5** compatible!
 * Set site-wide custom content for:
   * head page section (before the `</head>`)
   * body section (after the `<body>`) - **Requires WordPress 5.2!**
@@ -99,7 +99,7 @@ Each post/page/custom post type specific HEAD, BODY and FOOTER code and behaviou
 Each category specific HEAD, BODY and FOOTER code and behaviour saves to taxonomy meta `_auhfc`.
 
 During the Uninstall process all these data has been deleted from the database.
-In case you wish to reinstall plugin, **DO NOT UNINSTALL IT** although **Deactivate**, then delete the directory `/wp-content/plugins-head-footer-code` and then reinstall plugin.
+In case you wish to reinstall plugin, **DO NOT UNINSTALL IT** although **Deactivate**, then delete the directory `/wp-content/plugins/head-footer-code` and then reinstall plugin.
 
 
 ### Permissions on Multisite WordPress
@@ -173,12 +173,15 @@ Please report security bugs found in the source code of the Head & Footer Code p
 4. Example of custom code inserted to HEAD section (site-wide with appended article specific)
 5. Example of custom code inserted to BODY and FOOTER sections (site-wide with appended article specific)
 6. Category specific metabox
-7. Example of custom code inserted to HEAD section (site-wide with appended category specific)
-8. Example of custom code inserted to BODY and FOOTER section (site-wide with appended category specific)
-9. Example of **Head &amp; Footer Code** column on Pages listing, to identify which pages have set custom code, which one and what mode is selected
+7. Example of custom code inserted to HEAD, BODY and FOOTER section (site-wide with appended category specific)
+8. Example of **Head &amp; Footer Code** column on Pages listing, to identify which pages have set custom code, which one and what mode is selected
 
 
 ## Upgrade Notice
+
+### 1.5.0
+
+To improve security and prevent XSS, this release introduce filtering of all opening SCRIPT and STYLE tags, and remove all not allowed attributes from them (eg. `onload`, `onmouseover`, etc).
 
 ### 1.0.0
 
@@ -190,8 +193,21 @@ Introduced restriction for non-privileged roles (eg. Editor and Author) to acces
 
 ## Changelog
 
+### 1.5.1 (2026-02-23)
+* Fix: Code editor missing on categories
+* Cleanup: Remove debugging info
+* Update: Screenshots
+
+### 1.5.0 (2026-02-22)
+* Test: WordPress 7.0-beta1, Twenty Twenty-Five 1.4, PHP 8.5.3
+* Fix: Missing code editor when creating a new article
+* Fix: Incorrect use of <label for=FORM_ELEMENT>
+* Improve: Security (validate settings save data, better code filtering with included opening SCRIPT and STYLE tags)
+* Optimize: Code editor on articles
+* Optimize: Settings maintainability
+
 ### 1.4.6 (2025-12-01)
-* Test: WordPress 6.9RC3, Twenty Twenty-Five 1.6, PHP 8.4.15
+* Test: WordPress 6.9RC3, Twenty Twenty-Five 1.3, PHP 8.4.15
 
 ### 1.4.5 (2025-06-13)
 * Fix: Compatibility with Jetpack > Writing > Composing > Compose using shortcode to embed media from popular sites
