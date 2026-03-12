@@ -1,28 +1,78 @@
 <?php
 /**
- * Frontend magic for Head & Footer Code
+ * Frontend code injector.
  *
- * @package Head_Footer_Code
+ * Handles output of scripts/styles in `<head>`, start of `<body>`, and before
+ * `</body>` across various site contexts (site-wide, singular, archive, home).
+ *
+ * @package   Head_Footer_Code
+ * @since     1.0.0
  */
 
 namespace Techwebux\Hfc;
 
 // If this file is called directly, abort.
-if ( ! defined( 'WPINC' ) ) {
-	die;
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
 }
 
-use Techwebux\Hfc\Common;
-
+/**
+ * Class Front
+ *
+ * Conditionaly output code snippets on frontend
+ */
 class Front {
+	/** @var array Settings retrieved from the main controller. */
 	private $settings;
+
+	/** @var Plugin_Info Plugin metadata object. */
+	protected $plugin;
+
+	/** @var array Allowed HTML tags for sanitization. */
 	public $allowed_html;
 
-	public function __construct() {
-		/**
-		 * Inject site-wide code to head, body and footer with custom priorty.
-		 */
-		$this->settings = Main::settings();
+	/** @var array Cached page context to avoid repeated function calls. */
+	private $page_context = null;
+
+	/**
+	 * Location constants
+	 */
+	const LOCATION_HEAD   = 'head';
+	const LOCATION_BODY   = 'body';
+	const LOCATION_FOOTER = 'footer';
+
+	/**
+	 * Scope constants
+	 */
+	const SCOPE_SITEWIDE = 's';
+	const SCOPE_ARTICLE  = 'a';
+	const SCOPE_HOMEPAGE = 'h';
+	const SCOPE_TAXONOMY = 't';
+
+	/**
+	 * Initializes the class and registers frontend hooks.
+	 *
+	 * @param Plugin_Info $plugin Instance of the plugin info object.
+	 * @param array       $settings Plugin settings array.
+	 */
+	public function __construct( Plugin_Info $plugin, $settings ) {
+		$this->plugin       = $plugin;
+		$this->settings     = $settings;
+		$this->allowed_html = Common::allowed_html();
+
+		// Set default priorities if not defined.
+		$this->initialize_priorities();
+
+		// Define actions for HEAD, BODY and FOOTER.
+		add_action( 'wp_head', array( $this, 'wp_head' ), $this->settings['sitewide']['priority_h'] );
+		add_action( 'wp_body_open', array( $this, 'wp_body' ), $this->settings['sitewide']['priority_b'] );
+		add_action( 'wp_footer', array( $this, 'wp_footer' ), $this->settings['sitewide']['priority_f'] );
+	}
+
+	/**
+	 * Initialize priority settings with defaults.
+	 */
+	private function initialize_priorities() {
 		if ( empty( $this->settings['sitewide']['priority_h'] ) ) {
 			$this->settings['sitewide']['priority_h'] = 10;
 		}
@@ -32,226 +82,205 @@ class Front {
 		if ( empty( $this->settings['sitewide']['priority_f'] ) ) {
 			$this->settings['sitewide']['priority_f'] = 10;
 		}
-
-		$this->allowed_html = Common::allowed_html();
-
-		// Define actions for HEAD and FOOTER.
-		add_action( 'wp_head', array( $this, 'wp_head' ), $this->settings['sitewide']['priority_h'] );
-		add_action( 'wp_body_open', array( $this, 'wp_body' ), $this->settings['sitewide']['priority_b'] );
-		add_action( 'wp_footer', array( $this, 'wp_footer' ), $this->settings['sitewide']['priority_f'] );
-	} // END public function __construct
+	}
 
 	/**
-	 * Inject site-wide and Homepage or Article specific head code before </head>
+	 * Get and cache page context information.
+	 *
+	 * @return array Page context data.
+	 */
+	private function get_page_context() {
+		if ( null !== $this->page_context ) {
+			return $this->page_context;
+		}
+
+		$this->page_context = array(
+			'singular_post_type'     => Common::get_singular_post_type(),
+			'is_homepage_blog_posts' => Common::is_homepage_blog_posts(),
+			'is_supported_post_type' => Common::is_supported_singular_post_type(),
+			'is_supported_taxonomy'  => Common::is_supported_taxonomy(),
+			'is_paged'               => is_paged(),
+		);
+
+		return $this->page_context;
+	}
+
+	/**
+	 * Inject site-wide, Homepage, Article specific and Taxonomy specific head code before `</head>`
 	 */
 	public function wp_head() {
-		// Get variables to test.
-		$head_code              = '';
-		$head_behavior          = 'none';
-		$is_paged               = is_paged() ? 'yes' : 'no';
-		$post_type              = Common::get_post_type();
-		$is_homepage_blog_posts = Common::is_homepage_blog_posts();
-
-		// Get meta for post only if it's singular.
-		if ( 'not singular' !== $post_type && in_array( $post_type, $this->settings['article']['post_types'], true ) ) {
-			$head_behavior = Common::get_meta( 'behavior' );
-			$head_code     = Common::get_meta( 'head' );
-			$dbg_set       = "type: {$post_type}; bahavior: {$head_behavior}; priority: {$this->settings['sitewide']['priority_h']}; do_shortcode_h: {$this->settings['sitewide']['do_shortcode_h']}";
-		} elseif ( is_category() ) {
-			// Get category (term) meta with get_term_meta().
-			$category  = get_queried_object();
-			$auhfc_cat = get_term_meta( $category->term_id, '_auhfc', true );
-			if ( ! empty( $auhfc_cat ) ) {
-				$head_behavior = $auhfc_cat['behavior'];
-				$head_code     = $auhfc_cat['head'];
-			}
-			$dbg_set = "type: category; bahavior: {$head_behavior}; priority: {$this->settings['sitewide']['priority_h']}; do_shortcode_h: {$this->settings['sitewide']['do_shortcode_h']}";
-		} else {
-			$dbg_set = $post_type;
-
-			// Get meta for homepage.
-			if ( $is_homepage_blog_posts ) {
-				$add_to_homepage_paged = Common::add_to_homepage_paged( $is_homepage_blog_posts, $this->settings );
-				$head_behavior         = $this->settings['homepage']['behavior'];
-				$head_code             = $add_to_homepage_paged ? $this->settings['homepage']['head'] : ' ';
-				$dbg_set               = "type: homepage; bahavior: {$head_behavior}; is_paged: {$is_paged}; add_on_paged: {$this->settings['homepage']['paged']}; priority: {$this->settings['sitewide']['priority_h']}; do_shortcode_h: {$this->settings['sitewide']['do_shortcode_h']}";
-			}
-		}
-
-		// If no code to inject, simply exit.
-		if ( empty( $this->settings['sitewide']['head'] ) && empty( $head_code ) ) {
-			return;
-		}
-
-		// Prepare code output.
-		$out = '';
-
-		// Inject site-wide head code.
-		if (
-			! empty( $this->settings['sitewide']['head'] ) &&
-			Common::print_sitewide( $head_behavior, $head_code, $post_type, $this->settings['article']['post_types'], is_category() )
-		) {
-			$out .= Common::out( 's', 'h', $dbg_set, $this->settings['sitewide']['head'] );
-		}
-
-		// Inject head code for Homepage in Blog Posts mode OR article specific (for allowed post_type) head code OR category head code.
-		if ( ! empty( $head_code ) ) {
-			if ( $is_homepage_blog_posts ) {
-				$out .= Common::out( 'h', 'h', $dbg_set, $head_code );
-			} elseif ( in_array( $post_type, $this->settings['article']['post_types'], true ) ) {
-				$out .= Common::out( 'a', 'h', $dbg_set, $head_code );
-			} else {
-				$out .= Common::out( 'c', 'h', $dbg_set, $head_code );
-			}
-		}
-
-		// Print prepared code.
-		echo 'y' === $this->settings['sitewide']['do_shortcode_h']
-			? do_shortcode( $out )
-			: $out;
-			// We do not use wp_kses( $out, $this->allowed_html );
-			// because that mess up <, > and & which is sanitized on entry
-	} // END public function wp_head
+		$this->inject_code( self::LOCATION_HEAD );
+	}
 
 	/**
-	 * Inject site-wide and Article specific body code right after opening <body>
+	 * Inject site-wide, Homepage, Article specific and Taxonomy specific body code after opening `<body>`
 	 */
 	public function wp_body() {
-		// Get variables to test.
-		$body_code              = '';
-		$body_behavior          = 'none';
-		$is_paged               = is_paged() ? 'yes' : 'no';
-		$post_type              = Common::get_post_type();
-		$is_homepage_blog_posts = Common::is_homepage_blog_posts();
-
-		// Get meta for post only if it's singular.
-		if ( 'not singular' !== $post_type && in_array( $post_type, $this->settings['article']['post_types'], true ) ) {
-			$body_behavior = Common::get_meta( 'behavior' );
-			$body_code     = Common::get_meta( 'body' );
-			$dbg_set       = "type: {$post_type}; bahavior: {$body_behavior}; priority: {$this->settings['sitewide']['priority_b']}; do_shortcode_b: {$this->settings['sitewide']['do_shortcode_b']}";
-		} elseif ( is_category() ) {
-			// Get category (term) meta with get_term_meta().
-			$category  = get_queried_object();
-			$auhfc_cat = get_term_meta( $category->term_id, '_auhfc', true );
-			if ( ! empty( $auhfc_cat ) ) {
-				$body_behavior = $auhfc_cat['behavior'];
-				$body_code     = $auhfc_cat['body'];
-			}
-			$dbg_set = "type: category; bahavior: {$body_behavior}; priority: {$this->settings['sitewide']['priority_b']}; do_shortcode_b: {$this->settings['sitewide']['do_shortcode_b']}";
-		} else {
-			$dbg_set = $post_type;
-			// Get meta for homepage.
-			if ( $is_homepage_blog_posts ) {
-				$add_to_homepage_paged = Common::add_to_homepage_paged( $is_homepage_blog_posts, $this->settings );
-				$body_behavior         = $this->settings['homepage']['behavior'];
-				$body_code             = $add_to_homepage_paged ? $this->settings['homepage']['body'] : ' ';
-				$dbg_set               = "type: homepage; bahavior: {$body_behavior}; is_paged: {$is_paged}; add_on_paged: {$this->settings['homepage']['paged']}; priority: {$this->settings['sitewide']['priority_b']}; do_shortcode_b: {$this->settings['sitewide']['do_shortcode_b']}";
-			}
-		}
-
-		// If no code to inject, simple exit.
-		if ( empty( $this->settings['sitewide']['body'] ) && empty( $body_code ) ) {
-			return;
-		}
-
-		// Prepare code output.
-		$out = '';
-
-		// Inject site-wide body code.
-		if (
-			! empty( $this->settings['sitewide']['body'] ) &&
-			Common::print_sitewide( $body_behavior, $body_code, $post_type, $this->settings['article']['post_types'], is_category() )
-		) {
-			$out .= Common::out( 's', 'b', $dbg_set, $this->settings['sitewide']['body'] );
-		}
-
-		// Inject body code for Homepage in Blog Posts mode OR article specific (for allowed post_type) body code OR category body code.
-		if ( ! empty( $body_code ) ) {
-			if ( $is_homepage_blog_posts ) {
-				$out .= Common::out( 'h', 'b', $dbg_set, $body_code );
-			} elseif ( in_array( $post_type, $this->settings['article']['post_types'], true ) ) {
-				$out .= Common::out( 'a', 'b', $dbg_set, $body_code );
-			} else {
-				$out .= Common::out( 'c', 'b', $dbg_set, $body_code );
-			}
-		}
-
-		// Print prepared code.
-		echo 'y' === $this->settings['sitewide']['do_shortcode_b']
-			? do_shortcode( $out )
-			: $out;
-			// We do not use wp_kses( $out, $this->allowed_html );
-			// because that mess up <, > and & which is sanitized on entry
-	} // END public function wp_body
+		$this->inject_code( self::LOCATION_BODY );
+	}
 
 	/**
-	 * Inject site-wide and Article specific footer code before the </body>
+	 * Inject site-wide, Homepage, Article specific and Taxonomy specific footer code before the `</body>`
 	 */
 	public function wp_footer() {
-		// Get variables to test.
-		$footer_code            = '';
-		$footer_behavior        = 'none';
-		$is_paged               = is_paged() ? 'yes' : 'no';
-		$post_type              = Common::get_post_type();
-		$is_homepage_blog_posts = Common::is_homepage_blog_posts();
+		$this->inject_code( self::LOCATION_FOOTER );
+	}
 
-		// Get meta for post only if it's singular.
-		if ( 'not singular' !== $post_type && in_array( $post_type, $this->settings['article']['post_types'], true ) ) {
-			$footer_code     = Common::get_meta( 'footer' );
-			$footer_behavior = Common::get_meta( 'behavior' );
-			$dbg_set         = "type: {$post_type}; bahavior: {$footer_behavior}; priority: {$this->settings['sitewide']['priority_f']}; do_shortcode_f: {$this->settings['sitewide']['do_shortcode_f']}";
-		} elseif ( is_category() ) {
-			// Get category (term) meta with get_term_meta().
-			$category  = get_queried_object();
-			$auhfc_cat = get_term_meta( $category->term_id, '_auhfc', true );
-			if ( ! empty( $auhfc_cat ) ) {
-				$footer_behavior = $auhfc_cat['behavior'];
-				$footer_code     = $auhfc_cat['footer'];
-			}
-			$dbg_set = "type: category; bahavior: {$footer_behavior}; priority: {$this->settings['sitewide']['priority_f']}; do_shortcode_f: {$this->settings['sitewide']['do_shortcode_f']}";
-		} else {
-			$dbg_set = $post_type;
-			// Get meta for homepage.
-			if ( $is_homepage_blog_posts ) {
-				$add_to_homepage_paged = Common::add_to_homepage_paged( $is_homepage_blog_posts, $this->settings );
-				$footer_code           = $add_to_homepage_paged ? $this->settings['homepage']['footer'] : ' ';
-				$footer_behavior       = $this->settings['homepage']['behavior'];
-				$dbg_set               = "type: homepage; bahavior: {$footer_behavior}; is_paged: {$is_paged}; add_on_paged: {$this->settings['homepage']['paged']}; priority: {$this->settings['sitewide']['priority_f']}; do_shortcode_f: {$this->settings['sitewide']['do_shortcode_f']}";
-			}
-		}
+	/**
+	 * Generic code injection handler for all locations.
+	 *
+	 * @param string $location The location to inject code (head, body, or footer).
+	 */
+	private function inject_code( $location ) {
+		$context = $this->get_page_context();
 
-		// If no code to inject, simple exit.
-		if ( empty( $this->settings['sitewide']['footer'] ) && empty( $footer_code ) ) {
+		// Get location-specific configuration.
+		$config = $this->get_location_config( $location );
+
+		// Determine what code to inject based on context.
+		$injection_data = $this->determine_injection_data( $location, $context, $config );
+
+		// Early exit if nothing to inject.
+		if ( empty( $this->settings['sitewide'][ $location ] ) && empty( $injection_data['code'] ) ) {
 			return;
 		}
 
-		// Prepare code output.
-		$out = '';
+		// Build output.
+		$output = $this->build_output( $location, $injection_data, $context );
 
-		// Inject site-wide footer code.
+		// Print with optional shortcode processing.
+		echo 'y' === $config['do_shortcode']
+			? do_shortcode( $output )
+			: $output;
+			// We do not use wp_kses( $output, $this->allowed_html );
+			// because that would escape <, > and & which is already sanitized on entry.
+	}
+
+	/**
+	 * Get location-specific configuration.
+	 *
+	 * @param string $location The location (head, body, or footer).
+	 * @return array Configuration array.
+	 */
+	private function get_location_config( $location ) {
+		$location_char = substr( $location, 0, 1 ); // h, b, or f
+
+		return array(
+			'priority'     => $this->settings['sitewide'][ 'priority_' . $location_char ],
+			'do_shortcode' => $this->settings['sitewide'][ 'do_shortcode_' . $location_char ],
+		);
+	}
+
+	/**
+	 * Determine what code should be injected based on current context.
+	 *
+	 * @param string $location The location (head, body, or footer).
+	 * @param array  $context Page context data.
+	 * @param array  $config Location configuration.
+	 * @return array Injection data with behavior, code, debug info, and scope.
+	 */
+	private function determine_injection_data( $location, $context, $config ) {
+		$behavior = 'none';
+		$code     = '';
+		$dbg_set  = $context['singular_post_type'];
+		$scope    = '';
+
+		// Singular post (post, page, CPT).
+		if ( $context['singular_post_type'] && $context['is_supported_post_type'] ) {
+			$behavior = Common::get_meta_auto( 'behavior' );
+			$code     = Common::get_meta_auto( $location );
+			$scope    = self::SCOPE_ARTICLE;
+			$dbg_set  = sprintf(
+				'type: %s; behavior: %s; priority: %s; do_shortcode_%s: %s',
+				$context['singular_post_type'],
+				$behavior,
+				$config['priority'],
+				substr( $location, 0, 1 ),
+				$config['do_shortcode']
+			);
+		} elseif ( $context['is_supported_taxonomy'] ) {
+			// Taxonomy (category, tag, custom taxonomy).
+			$tax_object = get_queried_object();
+			$behavior   = Common::get_meta_auto( 'behavior', 'term' );
+			$code       = Common::get_meta_auto( $location, 'term' );
+			$scope      = self::SCOPE_TAXONOMY;
+			$dbg_set    = sprintf(
+				'type: %s; behavior: %s; priority: %s; do_shortcode_%s: %s',
+				$tax_object->taxonomy,
+				$behavior,
+				$config['priority'],
+				substr( $location, 0, 1 ),
+				$config['do_shortcode']
+			);
+		} elseif ( $context['is_homepage_blog_posts'] ) {
+			// Homepage in blog posts mode.
+			$add_to_homepage_paged = Common::is_addable_to_paged_homepage(
+				$context['is_homepage_blog_posts'],
+				$this->settings
+			);
+			$behavior              = $this->settings['homepage']['behavior'];
+			$code                  = $add_to_homepage_paged ? $this->settings['homepage'][ $location ] : ' ';
+			$scope                 = self::SCOPE_HOMEPAGE;
+			$dbg_set               = sprintf(
+				'type: homepage; behavior: %s; is_paged: %s; add_on_paged: %s; priority: %s; do_shortcode_%s: %s',
+				$behavior,
+				$context['is_paged'] ? 'yes' : 'no',
+				$this->settings['homepage']['paged'],
+				$config['priority'],
+				substr( $location, 0, 1 ),
+				$config['do_shortcode']
+			);
+		}
+
+		return array(
+			'behavior' => $behavior,
+			'code'     => $code,
+			'dbg_set'  => $dbg_set,
+			'scope'    => $scope,
+		);
+	}
+
+	/**
+	 * Build the final output string.
+	 *
+	 * @param string $location The location (head, body, or footer).
+	 * @param array  $injection_data Injection data from determine_injection_data().
+	 * @param array  $context Page context data.
+	 * @return string The composed output.
+	 */
+	private function build_output( $location, $injection_data, $context ) {
+		$output       = '';
+		$location_key = substr( $location, 0, 1 ); // h, b, or f
+
+		// Inject site-wide code if appropriate.
 		if (
-			! empty( $this->settings['sitewide']['footer'] ) &&
-			Common::print_sitewide( $footer_behavior, $footer_code, $post_type, $this->settings['article']['post_types'], is_category() )
+			! empty( $this->settings['sitewide'][ $location ] ) &&
+			Common::is_printable_sitewide(
+				$injection_data['behavior'],
+				$injection_data['code'],
+				$context['singular_post_type'],
+				$this->settings['article']['post_types'],
+				$context['is_supported_taxonomy']
+			)
 		) {
-			$out .= Common::out( 's', 'f', $dbg_set, $this->settings['sitewide']['footer'] );
+			$output .= Common::annotate_code_block(
+				self::SCOPE_SITEWIDE,
+				$location_key,
+				$injection_data['dbg_set'],
+				$this->settings['sitewide'][ $location ]
+			);
 		}
 
-		// Inject footer code for Homepage in Blog Posts mode OR article specific (for allowed post_type) footer code OR category footer code.
-		if ( ! empty( $footer_code ) ) {
-			if ( $is_homepage_blog_posts ) {
-				$out .= Common::out( 'h', 'f', $dbg_set, $footer_code );
-			} elseif ( in_array( $post_type, $this->settings['article']['post_types'], true ) ) {
-				$out .= Common::out( 'a', 'f', $dbg_set, $footer_code );
-			} else {
-				$out .= Common::out( 'c', 'f', $dbg_set, $footer_code );
-			}
+		// Inject context-specific code (homepage, article, or taxonomy).
+		if ( ! empty( $injection_data['code'] ) && ! empty( $injection_data['scope'] ) ) {
+			$output .= Common::annotate_code_block(
+				$injection_data['scope'],
+				$location_key,
+				$injection_data['dbg_set'],
+				$injection_data['code']
+			);
 		}
 
-		// Print prepared code.
-		echo 'y' === $this->settings['sitewide']['do_shortcode_f']
-			? do_shortcode( $out )
-			: $out;
-			// We do not use wp_kses( $out, $this->allowed_html );
-			// because that mess up <, > and & which is sanitized on entry
-	} // END public function wp_footer
-} // END class Front
+		return $output;
+	}
+}

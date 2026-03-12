@@ -1,10 +1,17 @@
 <?php
 /**
- * Template to render article and category specific metaboxes.
+ * Single article and category metabox template.
  *
- * @package Head_Footer_Code
- * @since: 1.4.0
+ * @package    Head_Footer_Code
+ * @category   Template
+ * @since      1.4.0
  */
+
+// If this file is called directly, abort.
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
 $auhfc_demo_url = get_stylesheet_directory_uri();
 ?>
 <p>
@@ -12,12 +19,13 @@ $auhfc_demo_url = get_stylesheet_directory_uri();
 printf(
 	/* translators: 1: category or article specific, 2: </head>, 3: <body>, 4: </body> */
 	esc_html__( 'Here you can insert %1$s code for HEAD (before the %2$s), BODY (after the %3$s) and FOOTER (before the %4$s) sections.', 'head-footer-code' ),
-	esc_html( $form_scope ),
+	esc_html( $auhfc_form_scope ),
 	'<code>&lt;/head&gt;</code>',
 	'<code>&lt;body&gt;</code>',
 	'<code>&lt;/body&gt;</code>'
 );
-echo '<br>';
+
+echo '</p><p>';
 
 // One who can manage options and modify category settings
 if ( ! current_user_can( 'manage_options' ) ) {
@@ -26,22 +34,23 @@ if ( ! current_user_can( 'manage_options' ) ) {
 	printf(
 		/* translators: 1: User role(s) that can manage options (Super Admin and/or Administrator), 2: Path/Name of Plugin Settings page */
 		esc_html__( 'They work in exactly the same way as site-wide code, which %1$s can configure under %2$s.', 'head-footer-code' ),
-		esc_html__( 'Tools', 'head-footer-code' ) . ' > ' . esc_html( HFC_PLUGIN_NAME ),
+		esc_html__( 'Tools', 'head-footer-code' ) . ' > ' . esc_html( $this->plugin->name ),
 		esc_html( $auhfc_allowed_managers )
 	);
 } else {
 	printf(
 		/* translators: Link to Plugin Settings page */
 		esc_html__( 'They work in exactly the same way as site-wide code, which you can configure under %s.', 'head-footer-code' ),
-		'<a href="tools.php?page=' . esc_attr( HFC_PLUGIN_SLUG ) . '">' . esc_html__( 'Tools', 'head-footer-code' ) . ' > ' . esc_html( HFC_PLUGIN_NAME ) . '</a>'
+		'<a href="tools.php?page=' . esc_attr( $this->plugin->slug ) . '">' . esc_html__( 'Tools', 'head-footer-code' ) . ' > ' . esc_html( $this->plugin->name ) . '</a>'
 	);
 }
-echo '<br>';
+
+echo '</p><p>';
 
 printf(
 	/* translators: 1: category or article specific, HTML comment code */
 	esc_html__( 'Please note, if you leave empty any of %1$s fields and choose replace behavior, site-wide code will not be removed until you add empty space or empty HTML comment %2$s here.', 'head-footer-code' ),
-	esc_html( $form_scope ),
+	esc_html( $auhfc_form_scope ),
 	'<code>&lt;!-- --&gt;</code>'
 );
 ?>
@@ -54,10 +63,10 @@ printf(
 				<label for="auhfc_behavior"><?php esc_html_e( 'Behavior', 'head-footer-code' ); ?></label>
 			</th>
 			<td>
-				<?php $current_behavior = isset( $auhfc_form_data['behavior'] ) ? $auhfc_form_data['behavior'] : 'append'; ?>
+				<?php $auhfc_current_behavior = isset( $auhfc_form_data['behavior'] ) ? $auhfc_form_data['behavior'] : 'append'; ?>
 				<select name="auhfc[behavior]" id="auhfc_behavior">
-					<option value="append" <?php selected( $current_behavior, 'append' ); ?>><?php esc_html_e( 'Append to the site-wide code', 'head-footer-code' ); ?></option>
-					<option value="replace" <?php selected( $current_behavior, 'replace' ); ?>><?php esc_html_e( 'Replace the site-wide code', 'head-footer-code' ); ?></option>
+					<option value="append" <?php selected( $auhfc_current_behavior, 'append' ); ?>><?php esc_html_e( 'Append to the site-wide code', 'head-footer-code' ); ?></option>
+					<option value="replace" <?php selected( $auhfc_current_behavior, 'replace' ); ?>><?php esc_html_e( 'Replace the site-wide code', 'head-footer-code' ); ?></option>
 				</select>
 			</td>
 		</tr>
@@ -67,7 +76,12 @@ printf(
 				<label for="auhfc_head"><?php esc_html_e( 'HEAD Code', 'head-footer-code' ); ?></label>
 			</th>
 			<td>
-				<div class="description"><?php echo $security_risk_notice; ?></div>
+				<div class="description">
+					<p class="notice notice-warning">
+						<strong><?php echo esc_html( $auhfc_security_risk_notice['title'] ); ?></strong>
+						<?php echo esc_html( $auhfc_security_risk_notice['message'] ); ?>
+					</p>
+				</div>
 				<textarea name="auhfc[head]" id="auhfc_head" class="widefat code codeEditor" rows="5"><?php echo ! empty( $auhfc_form_data['head'] ) ? esc_textarea( $auhfc_form_data['head'] ) : ''; ?></textarea>
 				<p class="description"><?php esc_html_e( 'Example', 'head-footer-code' ); ?>: <code>&lt;link&nbsp;rel="stylesheet" href="<?php echo esc_url( $auhfc_demo_url ); ?>/custom-style.css" type="text/css" media="all"&gt;</code></p>
 			</td>
@@ -77,7 +91,12 @@ printf(
 				<label for="auhfc_body"><?php esc_html_e( 'BODY Code', 'head-footer-code' ); ?></label>
 			</th>
 			<td>
-				<div class="description"><?php echo $security_risk_notice; ?></div>
+				<div class="description">
+					<p class="notice notice-warning">
+						<strong><?php echo esc_html( $auhfc_security_risk_notice['title'] ); ?></strong>
+						<?php echo esc_html( $auhfc_security_risk_notice['message'] ); ?>
+					</p>
+				</div>
 				<textarea name="auhfc[body]" id="auhfc_body" class="widefat code codeEditor" rows="5"><?php echo ! empty( $auhfc_form_data['body'] ) ? esc_textarea( $auhfc_form_data['body'] ) : ''; ?></textarea>
 				<p class="description"><?php esc_html_e( 'Example', 'head-footer-code' ); ?>: <code>&lt;script src="<?php echo esc_url( $auhfc_demo_url ); ?>/body-script.js" type="text/javascript"&gt;&lt;/script&gt;</code></p>
 			</td>
@@ -87,7 +106,12 @@ printf(
 				<label for="auhfc_footer"><?php esc_html_e( 'FOOTER Code', 'head-footer-code' ); ?></label>
 			</th>
 			<td>
-				<div class="description"><?php echo $security_risk_notice; ?></div>
+				<div class="description">
+					<p class="notice notice-warning">
+						<strong><?php echo esc_html( $auhfc_security_risk_notice['title'] ); ?></strong>
+						<?php echo esc_html( $auhfc_security_risk_notice['message'] ); ?>
+					</p>
+				</div>
 				<textarea name="auhfc[footer]" id="auhfc_footer" class="widefat code codeEditor" rows="5"><?php echo ! empty( $auhfc_form_data['footer'] ) ? esc_textarea( $auhfc_form_data['footer'] ) : ''; ?></textarea>
 				<p class="description"><?php esc_html_e( 'Example', 'head-footer-code' ); ?>: <code>&lt;script src="<?php echo esc_url( $auhfc_demo_url ); ?>/footer-script.js" type="text/javascript"&gt;&lt;/script&gt;</code></p>
 			</td>

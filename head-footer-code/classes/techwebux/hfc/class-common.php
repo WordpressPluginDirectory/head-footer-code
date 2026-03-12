@@ -1,29 +1,54 @@
 <?php
 /**
- * Various common functions for Head & Footer Code
+ * Utility functions collection.
  *
- * @package Head_Footer_Code
+ * Provides shared helper methods and reusable logic used across
+ * different components of the plugin.
+ *
+ * @package   Head_Footer_Code
+ * @since     1.4.0
  */
 
 namespace Techwebux\Hfc;
 
 // If this file is called directly, abort.
-if ( ! defined( 'WPINC' ) ) {
-	die;
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
 }
 
 class Common {
-
+	/** @var array Settings retrieved from the main controller. */
 	private static $settings = null;
+
+	/** @var Plugin_Info Plugin metadata object. */
+	protected static $plugin;
+
+	/** @var array Custom set of allowed HTML tags. */
+	private static $allowed_html = null;
+
+	/**
+	 * Injects the plugin metadata object into the Common utility class.
+	 *
+	 * This allows static methods to access plugin properties like name,
+	 * version, and directory without needing global constants.
+	 *
+	 * @param Plugin_Info $plugin The plugin metadata container.
+	 * @param array       $settings Optional settings array to initialize.
+	 */
+	public static function init( Plugin_Info $plugin, $settings = null ) {
+		self::$plugin = $plugin;
+
+		if ( null !== $settings ) {
+			self::$settings = $settings;
+		}
+	}
 
 	/**
 	 * Initialize settings if not already set.
-	 *
-	 * @return void
 	 */
 	private static function init_settings() {
 		if ( null === self::$settings ) {
-			self::$settings = Main::settings();
+			self::$settings = Main::get_settings();
 		}
 	}
 
@@ -33,59 +58,178 @@ class Common {
 	 * @return bool
 	 */
 	public static function user_has_allowed_role() {
-		// Always allow Super Admin (Multisite)
+		self::init_settings();
+
+		// Always allow Super Admin (Multisite).
 		$current_user = wp_get_current_user();
 		if ( is_super_admin( $current_user->ID ) ) {
 			return true;
 		}
 
-		// Get current user roles
+		// Get current user roles.
 		$user_roles = (array) $current_user->roles;
 
-		// Initialize settings if not already initialized
-		self::init_settings();
-
-		// Merge fixed always-allowed and configurable allowed roles
+		// Merge fixed always-allowed and configurable allowed roles.
 		$allowed_roles = array_merge(
 			array( 'administrator', 'shop_manager' ),
 			self::$settings['article']['allowed_roles']
 		);
 
-		// Check if any of user's roles are in the allowed list
+		// Check if any of user's roles are in the allowed list.
 		return (bool) array_intersect( $user_roles, $allowed_roles );
 	}
 
 	/**
-	 * Function to check if homepage uses Blog mode
+	 * Check if homepage uses Blog mode
+	 *
+	 * @return bool
 	 */
 	public static function is_homepage_blog_posts() {
-		if ( is_home() && 'posts' === get_option( 'show_on_front', false ) ) {
+		return is_home() && 'posts' === get_option( 'show_on_front', false );
+	}
+
+	/**
+	 * Check if the current singular post type is enabled in plugin settings.
+	 *
+	 * @return bool
+	 */
+	public static function is_supported_singular_post_type() {
+		self::init_settings();
+
+		$singular_post_type = self::get_singular_post_type();
+
+		return $singular_post_type && in_array( $singular_post_type, self::$settings['article']['post_types'], true );
+	}
+
+	/**
+	 * Check if current queried request is on supported taxonomy page
+	 *
+	 * @return bool
+	 */
+	public static function is_supported_taxonomy() {
+		self::init_settings();
+
+		$queried_object = get_queried_object();
+
+		return ( is_category() || is_tag() || is_tax() )
+			&& isset( $queried_object->taxonomy )
+			&& in_array( $queried_object->taxonomy, self::$settings['article']['taxonomies'], true );
+	}
+
+	/**
+	 * Determine should we print site-wide code
+	 * or it should be replaced with homepage/article/taxonomy code.
+	 *
+	 * @param  string  $behavior       Behavior for article specific code (replace/append).
+	 * @param  string  $code           Article specific custom code.
+	 * @param  string  $post_type      Post type of current article.
+	 * @param  array   $post_types     Array of post types where article specific code is enabled.
+	 * @param  boolean $is_taxonomy    Indicate if current displayed page is taxonomy or not.
+	 * @return boolean                 Boolean that determine should site-wide code be printed (true) or not (false).
+	 */
+	public static function is_printable_sitewide_v1(
+		$behavior = 'append',
+		$code = '',
+		$post_type = null,
+		$post_types = array(),
+		$is_taxonomy = false
+	) {
+		// Always print if not replacing.
+		if ( 'replace' !== $behavior ) {
 			return true;
 		}
+
+		// If replacing but code is empty, still print sitewide.
+		if ( empty( $code ) ) {
+			return true;
+		}
+
+		// If replacing on non-supported post type, print sitewide.
+		if ( ! $is_taxonomy && ! in_array( $post_type, $post_types, true ) ) {
+			return true;
+		}
+
+		// Otherwise, don't print sitewide (it's being replaced).
 		return false;
-	} // END public static function is_homepage_blog_posts
+	}
+
+	/**
+	 * Determine should we print site-wide code
+	 * or it should be replaced with homepage/article/taxonomy code.
+	 *
+	 * @param  string  $behavior       Behavior for article specific code (replace/append).
+	 * @param  string  $code           Article specific custom code.
+	 * @param  string  $post_type      Post type of current article.
+	 * @param  array   $post_types     Array of post types where article specific code is enabled.
+	 * @param  boolean $is_taxonomy    Indicate if current displayed page is taxonomy or not.
+	 * @return boolean                 Boolean that determine should site-wide code be printed (true) or not (false).
+	 */
+	public static function is_printable_sitewide(
+		$behavior = 'append',
+		$code = '',
+		$post_type = null,
+		$post_types = array(),
+		$is_taxonomy = false
+	) {
+		// Always print if not replacing.
+		if ( 'replace' !== $behavior ) {
+			return true;
+		}
+
+		// If replacing but code is empty, still print sitewide.
+		if ( empty( $code ) ) {
+			return true;
+		}
+
+		// Check if we're on homepage in blog mode.
+		$is_homepage_blog_posts = self::is_homepage_blog_posts();
+
+		// On homepage with replace behavior and non-empty code, don't print sitewide.
+		if ( $is_homepage_blog_posts ) {
+			return false;
+		}
+
+		// On taxonomy with replace behavior and non-empty code, don't print sitewide.
+		if ( $is_taxonomy ) {
+			return false;
+		}
+
+		// If replacing on non-supported post type, print sitewide.
+		if ( ! in_array( $post_type, $post_types, true ) ) {
+			return true;
+		}
+
+		// We're on a supported post type with replace behavior and non-empty code.
+		// Don't print sitewide (it's being replaced).
+		return false;
+	}
 
 	/**
 	 * Function to check if code should be added on paged homepage in Blog mode
 	 *
-	 * @param bool  $is_homepage_blog_posts If current page is blog homepage
+	 * @param bool  $is_homepage_blog_posts If current page is blog homepage.
+	 * @param array $settings               Plugin settings (optional, uses static if not provided).
 	 *
 	 * @return bool
 	 */
-	public static function add_to_homepage_paged( $is_homepage_blog_posts ) {
-		// Ensure settings are initialized.
-		self::init_settings();
+	public static function is_addable_to_paged_homepage( $is_homepage_blog_posts, $settings = null ) {
+		// Use provided settings or fall back to static settings.
+		if ( null === $settings ) {
+			self::init_settings();
+			$settings = self::$settings;
+		}
 
 		if (
 			true === $is_homepage_blog_posts
-			&& ! empty( self::$settings['homepage']['paged'] )
-			&& 'no' === self::$settings['homepage']['paged']
 			&& is_paged()
+			&& ! empty( $settings['homepage']['paged'] )
+			&& 'no' === $settings['homepage']['paged']
 		) {
 			return false;
 		}
+
 		return true;
-	} // END public static function add_to_homepage_paged
+	}
 
 	/**
 	 * Sanitizes an HTML classnames to ensure it only contains valid characters.
@@ -93,11 +237,11 @@ class Common {
 	 * Strips the string down to A-Z,a-z,0-9,_,-, . If this results in an empty
 	 * string then it will return the alternative value supplied.
 	 *
-	 * @param string $classes    The classnames to be sanitized (multiple classnames separated by space)
+	 * @param string $classes    The classnames to be sanitized (multiple classnames separated by space).
 	 * @param string $fallback   Optional. The value to return if the sanitization ends up as an empty string.
 	 *                           Defaults to an empty string.
 	 *
-	 * @return string            The sanitized value
+	 * @return string            The sanitized value.
 	 */
 	public static function sanitize_html_classes( $classes, $fallback = '' ) {
 		// Strip out any %-encoded octets.
@@ -110,24 +254,26 @@ class Common {
 			return self::sanitize_html_classes( $fallback );
 		}
 
-		/**
-		 * Filters a sanitized HTML class string.
-		 *
-		 * @param string $sanitized The sanitized HTML class.
-		 * @param string $classse   HTML class before sanitization.
-		 * @param string $fallback  The fallback string.
-		 */
-		return apply_filters( 'sanitize_html_classes', $sanitized, $classes, $fallback );
-	} // END public static function sanitize_html_classes
+		return $sanitized;
+	}
 
 	/**
-	 * Prepare allowed code for KSES filtering
+	 * Defines the expanded schema of allowed HTML tags and attributes for KSES.
 	 *
-	 * @return array
+	 * Extends the default `post` global with specific attributes required for
+	 * modern tracking scripts, preloading (fetchpriority, imagesrcset),
+	 * and security (nonce, integrity).
+	 *
+	 * @return array Map of allowed tags and their permitted attributes.
 	 */
 	public static function allowed_html() {
+		// Return cached value if already initialized.
+		if ( null !== self::$allowed_html ) {
+			return self::$allowed_html;
+		}
+
 		// Allow safe HTML, JS, and CSS.
-		return array_merge(
+		self::$allowed_html = array_replace_recursive(
 			wp_kses_allowed_html( 'post' ), // Allow safe HTML for posts.
 			array(
 				'noscript' => true,
@@ -140,6 +286,11 @@ class Common {
 					'crossorigin' => true, // security
 					'nonce'       => true, // security
 					'charset'     => true,
+					// global
+					'id'          => true,
+					'class'       => true,
+					'dir'         => true,
+					'data-*'      => true,
 				),
 				// Allow <style> tags.
 				'style'    => array(
@@ -147,6 +298,12 @@ class Common {
 					'type'   => true,
 					'scoped' => true,
 					'nonce'  => true,
+					'title'  => true,
+					// global
+					'id'     => true,
+					'class'  => true,
+					'dir'    => true,
+					'data-*' => true,
 				),
 				// Allow <link> tags for CSS and preloading.
 				'link'     => array(
@@ -159,13 +316,18 @@ class Common {
 					'title'          => true,
 					'fetchpriority'  => true, // preload
 					'as'             => true, // preload
-					'imagesrcset'    => true, // preload for images https://developer.mozilla.org/en-US/docs/Web/API/HTMLLinkElement/imageSrcset
-					'imagesizes'     => true, // preload for images https://developer.mozilla.org/en-US/docs/Web/API/HTMLLinkElement/imageSizes
+					'imagesrcset'    => true, // preload for images
+					'imagesizes'     => true, // preload for images
 					'crossorigin'    => true, // security
 					'nonce'          => true, // security
 					'itemprop'       => true, // for structured data
 					'referrerpolicy' => true, // security
 					'integrity'      => true, // security
+					// global
+					'id'             => true,
+					'class'          => true,
+					'dir'            => true,
+					'data-*'         => true,
 				),
 				// Allow <meta> tags.
 				'meta'     => array(
@@ -176,19 +338,36 @@ class Common {
 					'itemprop'   => true,
 					'media'      => true,
 					'property'   => true,
+					// global
+					'id'         => true,
+					'class'      => true,
+					'dir'        => true,
+					'data-*'     => true,
 				),
-				// Allow <noscript> and <iframe> for GTag
-				'noscript' => true,
+				// Allow <iframe> for GTag and custom embeds.
 				'iframe'   => array(
-					'src'     => true,
-					'height'  => true,
-					'width'   => true,
-					'style'   => true,
-					'loading' => true,
+					// standard
+					'src'      => true,
+					'srcdoc'   => true,
+					'name'     => true,
+					'sandbox'  => true,
+					'seamless' => true,
+					'width'    => true,
+					'height'   => true,
+					// global
+					'class'    => true,
+					'hidden'   => true,
+					'id'       => true,
+					'style'    => true,
+					'loading'  => true,
+					'dir'      => true,
+					'data-*'   => true,
 				),
 			)
 		);
-	} // END public static function allowed_html
+
+		return self::$allowed_html;
+	}
 
 	/**
 	 * Define allowed FORM HTML for wp_kses
@@ -233,11 +412,6 @@ class Common {
 				'title' => array(),
 				'style' => array(),
 			),
-			/*
-			'div'      => array(
-				'class' => true,
-			),
-			*/
 			'p'        => array(
 				'class' => true,
 			),
@@ -247,7 +421,7 @@ class Common {
 				'class'  => true,
 				'title'  => true,
 			),
-			'code'     => array(), // No attributes for the <code> tag
+			'code'     => array(),
 			'br'       => array(),
 			'strong'   => array(),
 			'em'       => array(),
@@ -257,15 +431,18 @@ class Common {
 			),
 			'i'        => true,
 		);
-	} // END public static function form_allowed_html
+	}
 
 	/**
-	 * Sanitize HTML code by temporarily removing content within the
-	 * <script>...</script> and <style>...</style> before filtering
-	 * allowed HTML through wp_kses
+	 * Sanitizes HTML content while preserving script and style tag integrity.
 	 *
-	 * @param string $content
-	 * @return string Sanitized content (code inside SCRIPT and STYLE is untouched)
+	 * This method employs a placeholder strategy: it extracts `<script>` and `<style>`
+	 * blocks, sanitizes their attributes, and hides them from `wp_kses()` to prevent
+	 * the stripping of valid JS/CSS logic. After the remaining HTML is sanitized,
+	 * the blocks are reinstated.
+	 *
+	 * @param  string $content The raw HTML/JS/CSS content to sanitize.
+	 * @return string          Sanitized content with preserved safe scripts/styles.
 	 */
 	public static function sanitize_html_with_scripts( $content ) {
 		$allowed_html = self::allowed_html();
@@ -279,7 +456,7 @@ class Common {
 				$full_tag = $matches[0];
 				$tag_name = strtolower( $matches[1] ); // script or style
 
-				// Extract opening tag for improved security, eg. <script onload="…">
+				// Extract opening tag for improved security, e.g. <script onload="…">
 				if ( preg_match( '/^<' . $tag_name . '[^>]*>/i', $full_tag, $tag_match ) ) {
 					$opening_tag           = $tag_match[0];
 					$sanitized_opening_tag = wp_kses( $opening_tag, array( $tag_name => $allowed_html[ $tag_name ] ) );
@@ -296,7 +473,7 @@ class Common {
 			$content
 		);
 
-		// Sanitize rest of content (outside scripts/styles)
+		// Sanitize rest of content (outside scripts/styles).
 		$content = wp_kses( $content, $allowed_html );
 
 		if ( ! empty( $placeholders ) ) {
@@ -327,7 +504,7 @@ class Common {
 			remove_filter( 'pre_kses', $jetpack_filter, 100 );
 		}
 
-		// Build anitized data array
+		// Build sanitized data array.
 		$sanitized = array(
 			'behavior' => isset( $input['behavior'] ) ? sanitize_key( $input['behavior'] ) : 'append',
 			'head'     => isset( $input['head'] ) ? self::sanitize_html_with_scripts( $input['head'] ) : '',
@@ -335,7 +512,7 @@ class Common {
 			'footer'   => isset( $input['footer'] ) ? self::sanitize_html_with_scripts( $input['footer'] ) : '',
 		);
 
-		// Reinstate Jetpack filter
+		// Reinstate Jetpack filter.
 		if ( $has_jetpack ) {
 			add_filter( 'pre_kses', $jetpack_filter, 100 );
 		}
@@ -344,81 +521,137 @@ class Common {
 	}
 
 	/**
-	 * Get values of metabox fields
+	 * Get values of metabox fields for Posts or Terms.
 	 *
-	 * @param  string $field_name Post meta field key.
-	 * @param  string $post_id    Post ID (optional).
-	 * @return string             Post meta field value.
+	 * @param string $field_name Field key.
+	 * @param int    $id         Post ID or Term ID.
+	 * @param string $type       `post` or `term`.
+	 * @return mixed
 	 */
-	public static function get_meta( $field_name = '', $post_id = null ) {
-		if ( empty( $field_name ) ) {
-			return false;
+	public static function get_meta( $field_name, $id, $type = 'post' ) {
+		if ( empty( $field_name ) || empty( $id ) ) {
+			return ( 'behavior' === $field_name ) ? 'append' : '';
 		}
 
-		if ( empty( $post_id ) || intval( $post_id ) !== $post_id ) {
-			if ( is_admin() ) {
-				global $post;
+		$meta_key = '_auhfc';
 
-				// If $post has not an object, return false.
-				if ( empty( $post ) || ! is_object( $post ) ) {
-					return false;
-				}
+		// Get meta data based on type.
+		$data = ( 'post' === $type )
+			? get_post_meta( $id, $meta_key, true )
+			: get_term_meta( $id, $meta_key, true );
 
-				$post_id = $post->ID;
-			} else {
-				if ( is_singular() ) {
-					global $wp_the_query;
-					$post_id = $wp_the_query->get_queried_object_id();
-				} else {
-					$post_id = false;
-				}
-			}
-		} else {
-			$post_id = (int) $post_id;
+		// Check if we got array and requested key exists.
+		if ( is_array( $data ) && isset( $data[ $field_name ] ) ) {
+			// Remove slashes from escaped value (make value ready to use).
+			return stripslashes_deep( $data[ $field_name ] );
 		}
 
-		if ( empty( $post_id ) ) {
-			return false;
-		}
-
-		$field = get_post_meta( $post_id, '_auhfc', true );
-
-		if ( ! empty( $field ) && is_array( $field ) && ! empty( $field[ $field_name ] ) ) {
-			return stripslashes_deep( $field[ $field_name ] );
-		} elseif ( 'behavior' === $field_name ) {
+		// Default for behavior.
+		if ( 'behavior' === $field_name ) {
 			return 'append';
-		} else {
-			return false;
 		}
-	} // END public static function get_meta
+
+		return '';
+	}
 
 	/**
-	 * Function to get Post Type
-	 */
-	public static function get_post_type() {
-		$auhfc_post_type = 'not singular';
-		// Get post type.
-		if ( is_singular() ) {
-			global $wp_the_query;
-			$auhfc_query = $wp_the_query->get_queried_object();
-			if ( is_object( $auhfc_query ) ) {
-				$auhfc_post_type = $auhfc_query->post_type;
-			}
-		}
-		return $auhfc_post_type;
-	} // END public static function get_post_type
-
-	/**
-	 * Function to convert code to HTML special chars
+	 * Helper: Get post meta values.
 	 *
-	 * @param string $text RAW content.
+	 * @param string $field_name Field key.
+	 * @param int    $post_id    Post ID.
+	 * @return mixed
 	 */
-	public static function html2code( $text ) {
-		return '<code>' . htmlspecialchars( $text ) . '</code>';
-	} // END public static function html2code
+	public static function get_post_meta( $field_name, $post_id ) {
+		return self::get_meta( $field_name, $post_id, 'post' );
+	}
 
 	/**
-	 * Return debugging string if WP_DEBUG constant is true.
+	 * Helper: Get term meta values.
+	 *
+	 * @param string $field_name Field key.
+	 * @param int    $term_id    Term ID.
+	 * @return mixed
+	 */
+	public static function get_term_meta( $field_name, $term_id ) {
+		return self::get_meta( $field_name, $term_id, 'term' );
+	}
+
+	/**
+	 * Smart wrapper: Get meta with auto-detected ID.
+	 *
+	 * @param string $field_name Field key.
+	 * @param string $type       `post` or `term`.
+	 * @return mixed
+	 */
+	public static function get_meta_auto( $field_name, $type = 'post' ) {
+		return self::get_meta( $field_name, get_queried_object_id(), $type );
+	}
+
+	/**
+	 * Get Post Type for singular requests.
+	 *
+	 * @return mixed Post type slug or `false` if not on a singular page.
+	 */
+	public static function get_singular_post_type() {
+		return is_singular() ? get_post_type() : false;
+	}
+
+	/**
+	 * Return security risk notice title and message
+	 *
+	 * @return array
+	 */
+	public static function get_security_risk_notice() {
+		return array(
+			'title'   => __( 'WARNING!', 'head-footer-code' ),
+			'message' => __( 'Enter only safe, secure, and code from a trusted source. Unsafe or invalid code may break your site or pose security risks.', 'head-footer-code' ),
+		);
+	}
+
+	/**
+	 * Helper: Get scope label.
+	 *
+	 * @param string $scope Scope identifier.
+	 * @return string
+	 */
+	private static function get_scope_label( $scope ) {
+		$labels = array(
+			'h' => 'Homepage',
+			's' => 'Site-wide',
+			'a' => 'Article specific',
+			'c' => 'Category specific',
+			't' => 'Taxonomy specific',
+		);
+		return isset( $labels[ $scope ] ) ? $labels[ $scope ] : 'Unknown';
+	}
+
+	/**
+	 * Helper: Get location label.
+	 *
+	 * @param string $location Location identifier.
+	 * @return string
+	 */
+	private static function get_location_label( $location ) {
+		$labels = array(
+			'h' => 'HEAD',
+			'b' => 'BODY',
+			'f' => 'FOOTER',
+		);
+		return isset( $labels[ $location ] ) ? $labels[ $location ] : 'UNKNOWN';
+	}
+
+	/**
+	 * Wraps text in <code> tags and escapes HTML entities.
+	 *
+	 * @param string $text Text to format.
+	 * @return string
+	 */
+	public static function format_as_code( $text ) {
+		return sprintf( '<code>%s</code>', esc_html( $text ) );
+	}
+
+	/**
+	 * Wrap code block with debugging info when WP_DEBUG is true.
 	 *
 	 * @param  string $scope    Scope of output (s - SITE WIDE, a - ARTICLE SPECIFIC, h - HOMEPAGE).
 	 * @param  string $location Location of output (h - HEAD, b - BODY, f - FOOTER).
@@ -426,120 +659,44 @@ class Common {
 	 * @param  string $code     Code for output.
 	 * @return string           Composed string.
 	 */
-	public static function out(
+	public static function annotate_code_block(
 		$scope = null,
 		$location = null,
 		$message = null,
 		$code = null
 	) {
-		if ( ! WP_DEBUG ) {
+		if ( ! defined( 'WP_DEBUG' ) || ! WP_DEBUG ) {
 			return $code;
 		}
+
 		if ( null === $scope || null === $location || null === $message ) {
-			return;
+			return '';
 		}
-		switch ( $scope ) {
-			case 'h':
-				$scope = 'Homepage';
-				break;
-			case 's':
-				$scope = 'Site-wide';
-				break;
-			case 'a':
-				$scope = 'Article specific';
-				break;
-			case 'c':
-				$scope = 'Category specific';
-				break;
-			default:
-				$scope = 'Unknown';
-		}
-		switch ( $location ) {
-			case 'h':
-				$location = 'HEAD';
-				break;
-			case 'b':
-				$location = 'BODY';
-				break;
-			case 'f':
-				$location = 'FOOTER';
-				break;
-			default:
-				$location = 'UNKNOWN';
-				break;
-		}
+
+		$scope_label    = self::get_scope_label( $scope );
+		$location_label = self::get_location_label( $location );
+
 		return sprintf(
 			'<!-- %1$s: %2$s %3$s section start (%4$s) -->%6$s%5$s%6$s<!-- %1$s: %2$s %3$s section end (%4$s) -->%6$s',
-			HFC_PLUGIN_NAME,  // 1
-			$scope,           // 2
-			$location,        // 3
-			trim( $message ), // 4
-			trim( $code ),    // 5
-			"\n"              // 6
+			self::$plugin->name,          // 1
+			esc_html( $scope_label ),     // 2
+			esc_html( $location_label ),  // 3
+			esc_html( trim( $message ) ), // 4
+			trim( $code ),                // 5 - RAW (Pre-sanitized)
+			"\n"                          // 6
 		);
-	} // END public static function out
+	}
 
 	/**
-	 * Determine should we print site-wide code
-	 * or it should be replaced with homepage/article/category code.
-	 *
-	 * @param  string  $behavior       Behavior for article specific code (replace/append).
-	 * @param  string  $code           Article specific custom code.
-	 * @param  string  $post_type      Post type of current article.
-	 * @param  array   $post_types     Array of post types where article specific code is enabled.
-	 * @param  boolean $is_category    Indicate if current displayed page is category or not.
-	 * @return boolean                 Boolean that determine should site-wide code be printed (true) or not (false).
+	 * Print security risk notice
 	 */
-	public static function print_sitewide(
-		$behavior = 'append',
-		$code = '',
-		$post_type = null,
-		$post_types = array(),
-		$is_category = false
-	) {
-		// On homepage print site wide if...
-		$is_homepage_blog_posts = self::is_homepage_blog_posts();
-		if ( $is_homepage_blog_posts ) {
-			// ... homepage behavior is not replace, or...
-			// ... homepage behavior is replace but homepage code is empty.
-			if (
-				'replace' !== $behavior
-				|| ( 'replace' === $behavior && empty( $code ) )
-			) {
-				return true;
-			}
-		} elseif ( $is_category ) { // On category page print site wide if...
-			// ... behavior is not replace, or...
-			// ... behavior is replace but category content is empty.
-			if (
-				'replace' !== $behavior
-				|| ( 'replace' === $behavior && empty( $code ) )
-			) {
-				return true;
-			}
-		} elseif ( // On Blog Post or Custom Post Type ...
-			// ... article behavior is not replace, or...
-			// ... article behavior is replace but current Post Type is not in allowed Post Types, or...
-			// ... article behavior is replace and current Post Type is in allowed Post Types but article code is empty.
-			'replace' !== $behavior
-			|| ( 'replace' === $behavior && ! in_array( $post_type, $post_types, true ) )
-			|| ( 'replace' === $behavior && in_array( $post_type, $post_types, true ) && empty( $code ) )
-		) {
-			return true;
-		}
-
-		return false;
-	} // END public static function print_sitewide
-
-	/**
-	 * Format security risk notice for appending to each code textarea description
-	 *
-	 * @return string
-	 */
-	public static function security_risk_notice() {
-		return '<p class="notice notice-warning">'
-			. '<strong>' . esc_html__( 'WARNING!', 'head-footer-code' ) . '</strong> '
-			. esc_html__( 'Enter only safe, secure, and code from a trusted source. Unsafe or invalid code may break your site or pose security risks.', 'head-footer-code' )
-			. '</p>';
+	public static function print_security_risk_notice() {
+		echo wp_kses(
+			self::get_security_risk_notice(),
+			array(
+				'p'      => array( 'class' => true ),
+				'strong' => array(),
+			)
+		);
 	}
 }

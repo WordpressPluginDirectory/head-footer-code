@@ -1,38 +1,44 @@
 <?php
 /**
- * Class for Head & Footer Code article metabox
+ * Article metabox handler.
  *
- * @package Head_Footer_Code
+ * Manages the creation and data persistence of custom code snippet
+ * metaboxes for posts, pages, and custom post types.
+ *
+ * @package   Head_Footer_Code
+ * @since     1.0.0
  */
 
 namespace Techwebux\Hfc;
 
 // If this file is called directly, abort.
-if ( ! defined( 'WPINC' ) ) {
-	die;
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
 }
-
-use Techwebux\Hfc\Main;
-use Techwebux\Hfc\Common;
 
 /**
  * Class to compose Head & Footer article metabox
  */
 class Metabox_Article {
-
+	/** @var array Settings retrieved from the main controller. */
 	private $settings;
 
-	public function __construct() {
-		// Check if the current user's role has permission to edit HFC
-		if ( ! Common::user_has_allowed_role() ) {
-			return;
-		}
+	/** @var Plugin_Info Plugin metadata object. */
+	protected $plugin;
 
-		$this->settings = Main::settings();
+	/**
+	 * Initializes the class and registers frontend hooks.
+	 *
+	 * @param Plugin_Info $plugin   Instance of the plugin info object.
+	 * @param array       $settings Plugin settings array.
+	 */
+	public function __construct( Plugin_Info $plugin, $settings ) {
+		$this->plugin   = $plugin;
+		$this->settings = $settings;
 
 		add_action( 'load-post.php', array( $this, 'init_metaboxes' ) );
 		add_action( 'load-post-new.php', array( $this, 'init_metaboxes' ) );
-	} // END public function __construct
+	}
 
 	/**
 	 * Initialize metabox on proper backend screens
@@ -40,7 +46,7 @@ class Metabox_Article {
 	public function init_metaboxes() {
 		add_action( 'add_meta_boxes', array( $this, 'add' ) );
 		add_action( 'save_post', array( $this, 'save' ) );
-	} // END public function init_metaboxes
+	}
 
 	/**
 	 * This function adds a meta box with a callback function of my_metabox_callback()
@@ -55,14 +61,42 @@ class Metabox_Article {
 		foreach ( $this->settings['article']['post_types'] as $post_type ) {
 			add_meta_box(
 				'auhfc-head-footer-code',
-				esc_html( HFC_PLUGIN_NAME ),
-				array( $this, 'html' ),
+				esc_html( $this->plugin->name ),
+				array( $this, 'form' ),
 				$post_type,
 				'normal',
 				'low'
 			);
 		}
-	} // END public function add
+	}
+
+	/**
+	 * Callback function to prepare variables and render article metabox for Head & Footer Code.
+	 *
+	 * @param object $post WP_Post object.
+	 * @return void
+	 */
+	public function form( $post ) {
+		/** @var string $form_scope Used in ../templates/hfc-form.php */
+		$auhfc_form_scope = esc_html__( 'article specific', 'head-footer-code' );
+
+		$auhfc_security_risk_notice = Common::get_security_risk_notice();
+
+		$post_id = $post->ID;
+
+		// Get article specific postmeta.
+		/** @var array $auhfc_form_data Used in ../templates/hfc-form.php */
+		$auhfc_form_data = array(
+			'behavior' => Common::get_post_meta( 'behavior', $post_id ),
+			'head'     => Common::get_post_meta( 'head', $post_id ),
+			'body'     => Common::get_post_meta( 'body', $post_id ),
+			'footer'   => Common::get_post_meta( 'footer', $post_id ),
+		);
+
+		// Render nonce and form.
+		wp_nonce_field( '_head_footer_code_nonce', 'head_footer_code_nonce' );
+		include_once $this->plugin->dir . '/templates/hfc-form.php';
+	}
 
 	/**
 	 * Save meta box content.
@@ -75,7 +109,9 @@ class Metabox_Article {
 		}
 
 		// Sanitize the nonce input.
-		$nonce = isset( $_POST['head_footer_code_nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['head_footer_code_nonce'] ) ) : '';
+		$nonce = isset( $_POST['head_footer_code_nonce'] )
+		? sanitize_text_field( wp_unslash( $_POST['head_footer_code_nonce'] ) )
+		: '';
 
 		/**
 		 * To update HFC for the article, make sure:
@@ -96,29 +132,6 @@ class Metabox_Article {
 
 		// Sanitize data and update post meta.
 		$data = Common::sanitize_hfc_data( $_POST['auhfc'] );
-		update_post_meta( $post_id, '_auhfc', wp_slash( $data ) );
-	} // END public function save
-
-	/**
-	 * Callback function to prepare variables and render article metabox for Head & Footer Code.
-	 */
-	public function html() {
-		/** @var string $form_scope Used in ../templates/hfc-form.php */
-		$form_scope = esc_html__( 'article specific', 'head-footer-code' );
-
-		$security_risk_notice = Common::security_risk_notice();
-
-		// Get article specific postmeta.
-		/** @var array $auhfc_form_data Used in ../templates/hfc-form.php */
-		$auhfc_form_data = array(
-			'behavior' => Common::get_meta( 'behavior' ),
-			'head'     => Common::get_meta( 'head' ),
-			'body'     => Common::get_meta( 'body' ),
-			'footer'   => Common::get_meta( 'footer' ),
-		);
-
-		// Render nonce and form.
-		wp_nonce_field( '_head_footer_code_nonce', 'head_footer_code_nonce' );
-		include_once HFC_DIR . '/templates/hfc-form.php';
-	} // END public function html
-} // END class Metabox
+		update_post_meta( $post_id, $this->plugin->meta_key, wp_slash( $data ) );
+	}
+}

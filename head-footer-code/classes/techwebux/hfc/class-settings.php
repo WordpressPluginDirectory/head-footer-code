@@ -1,44 +1,71 @@
 <?php
 /**
- * Settings page for Head & Footer Code plugin
+ * Admin settings handler.
  *
- * @package Head_Footer_Code
+ * Manages rendering of the options page, sanitization of inputs,
+ * and saving general plugin configurations.
+ *
+ * @package   Head_Footer_Code
+ * @since     1.0.0
  */
 
 namespace Techwebux\Hfc;
 
 // If this file is called directly, abort.
-if ( ! defined( 'WPINC' ) ) {
-	die;
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
 }
 
-use Techwebux\Hfc\Main;
-use Techwebux\Hfc\Common;
-
 class Settings {
-
+	/** @var array Settings retrieved from the main controller. */
 	private $settings;
+
+	/** @var Plugin_Info Plugin metadata object. */
+	protected $plugin;
+
+	/** @var array Allowed HTML tags for sanitization. */
 	public $allowed_html;
 	public $form_allowed_html;
 	public $security_risk_notice;
 
-	public function __construct() {
-		$this->settings          = Main::settings();
-		$this->allowed_html      = Common::allowed_html();
-		$this->form_allowed_html = Common::form_allowed_html();
+	/**
+	 * Initializes the class and registers admin hooks.
+	 *
+	 * @param Plugin_Info $plugin Instance of the plugin info object.
+	 * @param array       $settings Plugin settings array.
+	 */
+	public function __construct( Plugin_Info $plugin, $settings ) {
+		$this->plugin   = $plugin;
+		$this->settings = $settings;
+
+		// Add Settings page link to plugin actions cell.
+		add_filter( 'plugin_action_links_' . $this->plugin->basename, array( $this, 'plugin_settings_link' ) );
+
+		// Update links in plugin row on Plugins page.
+		add_filter( 'plugin_row_meta', array( $this, 'add_plugin_meta_links' ), 10, 2 );
 
 		// Create menu item for settings page.
 		add_action( 'admin_menu', array( $this, 'add_admin_menu' ) );
 
-		// Initiate settings section and fields.
-		add_action( 'admin_init', array( $this, 'settings_init' ) );
+		// add_action( 'admin_init', array( $this, 'settings_init' ) );
+		add_action( 'admin_init', array( $this, 'settings_register' ) );
 
-		// Add Settings page link to plugin actions cell.
-		add_filter( 'plugin_action_links_' . plugin_basename( HFC_FILE ), array( $this, 'plugin_settings_link' ) );
+		// Plugins settings page only hooks.
+		$current_page = filter_input( INPUT_GET, 'page', FILTER_SANITIZE_FULL_SPECIAL_CHARS );
 
-		// Update links in plugin row on Plugins page.
-		add_filter( 'plugin_row_meta', array( $this, 'add_plugin_meta_links' ), 10, 2 );
-	} // END public function __construct
+		if ( ! empty( $current_page ) && $current_page === $this->plugin->slug ) {
+
+			$this->allowed_html      = Common::allowed_html();
+			$this->form_allowed_html = Common::form_allowed_html();
+
+			// Initiate settings section and fields.
+
+			add_action( 'admin_init', array( $this, 'settings_prepare' ) );
+
+			// Add Review CTA to the footer thankyou
+			add_filter( 'admin_footer_text', array( $this, 'custom_footer_thankyou' ) );
+		}
+	}
 
 	/**
 	 * Add submenu for Head & Footer code to Tools.
@@ -46,28 +73,68 @@ class Settings {
 	public function add_admin_menu() {
 		add_submenu_page(
 			'tools.php',                   // Parent Slug.
-			HFC_PLUGIN_NAME,               // Page Title.
-			HFC_PLUGIN_NAME,               // Menu Title.
+			$this->plugin->name,           // Page Title.
+			$this->plugin->name,           // Menu Title.
 			'manage_options',              // Capability.
-			HFC_PLUGIN_SLUG,               // Menu Slug.
+			$this->plugin->slug,           // Menu Slug.
 			array( $this, 'options_page' ) // Callback.
 			// Position.
 		);
-	} // END public function add_admin_menu
+	}
+
+	/**
+	 * Register a setting and its sanitization callback.
+	 *
+	 * This is part of the Settings API, which lets you automatically generate
+	 * wp-admin settings pages by registering your settings and using a few
+	 * callbacks to control the output.
+	 *
+	 * @return void
+	 */
+	public function settings_register() {
+		$homepage_blog_posts = 'posts' === get_option( 'show_on_front', false ) ? true : false;
+
+		// Site-wide.
+		register_setting(
+			'head_footer_code_settings', // Option group.
+			'auhfc_settings_sitewide',   // Option name.
+			array(
+				'sanitize_callback' => array( $this, 'sanitize_sitewide' ),
+			)
+		);
+
+		// Blog gomepage.
+		if ( $homepage_blog_posts ) {
+			register_setting(
+				'head_footer_code_settings', // Option group.
+				'auhfc_settings_homepage',   // Option name.
+				array(
+					'sanitize_callback' => array( $this, 'sanitize_homepage' ),
+				)
+			);
+		}
+
+		// Articles
+		register_setting(
+			'head_footer_code_settings', // Option group.
+			'auhfc_settings_article',    // Option name.
+			array(
+				'sanitize_callback' => array( $this, 'sanitize_article' ),
+			)
+		);
+	}
 
 	/**
 	 * Register a setting and its sanitization callback
 	 * define section and settings fields
 	 */
-	public function settings_init() {
+	public function settings_prepare() {
 		/**
 		 * Get settings from options table
 		 */
-		$auhfc_homepage_blog_posts  = 'posts' === get_option( 'show_on_front', false ) ? true : false;
-		$wp52note                   = version_compare( get_bloginfo( 'version' ), '5.2', '<' ) ? ' ' . esc_html__( 'Requires WordPress 5.2 or later.', 'head-footer-code' ) : '';
+		$homepage_blog_posts        = 'posts' === get_option( 'show_on_front', false ) ? true : false;
 		$head_note                  = $this->head_note();
-		$body_note                  = $this->body_note();
-		$this->security_risk_notice = Common::security_risk_notice();
+		$this->security_risk_notice = Common::get_security_risk_notice();
 
 		/**
 		 * Settings Sections are the groups of settings you see on WordPress settings pages
@@ -80,7 +147,7 @@ class Settings {
 			'head_footer_code_settings_sitewide',                             // Id.
 			__( 'Site-wide head, body and footer code', 'head-footer-code' ), // Title.
 			array( $this, 'sitewide_settings_section_description' ),          // Callback.
-			HFC_PLUGIN_SLUG                                                   // Page.
+			$this->plugin->slug                                               // Page.
 		);
 
 		/**
@@ -90,15 +157,15 @@ class Settings {
 		 * callbacks to control the output.
 		 */
 		$this->add_field(
-			'head',                                // Id.
+			'head',                                        // Id.
 			esc_html__( 'HEAD Code', 'head-footer-code' ), // Title.
-			'textarea_field_render',               // Callback method name.
-			'sitewide',                            // Section.
-			array(                                 // Arguments.
+			'textarea_field_render',                       // Callback method name.
+			'sitewide',                                    // Section.
+			array(                                         // Arguments.
 				'description' => $head_note . '<p>' . sprintf(
 					/* translators: %s will be replaced with preformatted HTML tag </head> */
 					esc_html__( 'Code to enqueue in HEAD section (before the %s).', 'head-footer-code' ),
-					Common::html2code( '</head>' )
+					Common::format_as_code( '</head>' )
 				) . '</p>',
 				'field_class' => 'widefat code codeEditor',
 				'rows'        => 7,
@@ -115,7 +182,7 @@ class Settings {
 					/* translators: 1: default HEAD priority, 2: preformatted HTML tag </head> */
 					esc_html__( 'Priority for enqueued HEAD code. Default is %1$d. Larger number inject code closer to %2$s.', 'head-footer-code' ),
 					10,
-					Common::html2code( '</head>' )
+					Common::format_as_code( '</head>' )
 				),
 				'class'       => 'num',
 				'min'         => 1,
@@ -145,11 +212,11 @@ class Settings {
 			'textarea_field_render',
 			'sitewide',
 			array(
-				'description' => $body_note . '<p>' . sprintf(
+				'description' => '<p>' . sprintf(
 					/* translators: %s will be replaced with preformatted HTML tag <body> */
 					esc_html__( 'Code to enqueue in BODY section (after the %s).', 'head-footer-code' ),
-					Common::html2code( '<body>' )
-				) . ' ' . $wp52note . '</p>',
+					Common::format_as_code( '<body>' )
+				) . '</p>',
 				'field_class' => 'widefat code codeEditor',
 				'rows'        => 7,
 			)
@@ -168,9 +235,8 @@ class Settings {
 						'head-footer-code'
 					),
 					10,
-					Common::html2code( '<body>' )
-				)
-				. $wp52note,
+					Common::format_as_code( '<body>' )
+				),
 				'class'       => 'num',
 				'min'         => 1,
 				'max'         => 1000,
@@ -202,7 +268,7 @@ class Settings {
 				'description' => '<p>' . sprintf(
 					/* translators: %s will be replaced with preformatted HTML tag </body> */
 					esc_html__( 'Code to enqueue in footer section (before the %s).', 'head-footer-code' ),
-					Common::html2code( '</body>' )
+					Common::format_as_code( '</body>' )
 				) . '</p>',
 				'field_class' => 'widefat code codeEditor',
 				'rows'        => 7,
@@ -219,7 +285,7 @@ class Settings {
 					/* translators: 1: default FOOTER priority, 2: preformatted HTML tag </body> */
 					esc_html__( 'Priority for enqueued FOOTER code. Default is %1$d. Larger number inject code closer to %2$s.', 'head-footer-code' ),
 					10,
-					Common::html2code( '</body>' )
+					Common::format_as_code( '</body>' )
 				),
 				'class'       => 'num',
 				'min'         => 1,
@@ -244,23 +310,9 @@ class Settings {
 		);
 
 		/**
-		 * Register a setting and its sanitization callback.
-		 * This is part of the Settings API, which lets you automatically generate
-		 * wp-admin settings pages by registering your settings and using a few
-		 * callbacks to control the output.
-		 */
-		register_setting(
-			'head_footer_code_settings', // Option group.
-			'auhfc_settings_sitewide',   // Option name.
-			array(
-				'sanitize_callback' => array( $this, 'sanitize_sitewide' ),
-			)
-		);
-
-		/**
 		 * Add section for Homepage if show_on_front is set to Blog Posts
 		 */
-		if ( $auhfc_homepage_blog_posts ) {
+		if ( $homepage_blog_posts ) {
 			/**
 			 * Settings Sections are the groups of settings you see on WordPress settings pages
 			 * with a shared heading. In your plugin you can add new sections to existing
@@ -272,7 +324,7 @@ class Settings {
 				'head_footer_code_settings_homepage',                                                          // Id.
 				esc_html__( 'Head, body and footer code on Homepage in Blog Posts mode', 'head-footer-code' ), // Title.
 				array( $this, 'homepage_settings_section_description' ),                                       // Callback.
-				HFC_PLUGIN_SLUG                                                                                // Page.
+				$this->plugin->slug                                                                            // Page.
 			);
 
 			/**
@@ -282,16 +334,16 @@ class Settings {
 			 * callbacks to control the output.
 			 */
 			$this->add_field(
-				'head',                             // Id.
+				'head',                                                 // Id.
 				esc_html__( 'Homepage HEAD Code', 'head-footer-code' ), // Title.
 				'textarea_field_render',                                // Callback name.
-				'homepage',                   // Section.
+				'homepage',                                             // Section.
 				array(                                                  // Arguments.
 					'label'       => __( 'Homepage HEAD Code', 'head-footer-code' ),
 					'description' => $head_note . '<p>' . sprintf(
 						/* translators: %s will be replaced with preformatted HTML tag </head> */
 						esc_html__( 'Code to enqueue in HEAD section (before the %s) on Homepage.', 'head-footer-code' ),
-						Common::html2code( '</head>' )
+						Common::format_as_code( '</head>' )
 					) . '</p>',
 					'field_class' => 'widefat code codeEditor',
 					'rows'        => 5,
@@ -305,12 +357,11 @@ class Settings {
 				'homepage',
 				array(
 					'label'       => __( 'Homepage BODY Code', 'head-footer-code' ),
-					'description' => $body_note . '<p>' . sprintf(
+					'description' => '<p>' . sprintf(
 						/* translators: %s: preformatted HTML tag <body> */
 						esc_html__( 'Code to enqueue in BODY section (after the %s) on Homepage.', 'head-footer-code' ),
-						Common::html2code( '<body>' )
-					) . '</p>'
-					. $wp52note,
+						Common::format_as_code( '<body>' )
+					) . '</p>',
 					'field_class' => 'widefat code codeEditor',
 					'rows'        => 5,
 				)
@@ -326,7 +377,7 @@ class Settings {
 					'description' => '<p>' . sprintf(
 						/* translators: %s will be replaced with preformatted HTML tag </body> */
 						esc_html__( 'Code to enqueue in footer section (before the %s) on Homepage.', 'head-footer-code' ),
-						Common::html2code( '</body>' )
+						Common::format_as_code( '</body>' )
 					) . '</p>',
 					'field_class' => 'widefat code codeEditor',
 					'rows'        => 5,
@@ -362,21 +413,7 @@ class Settings {
 					'class'       => 'regular-text',
 				)
 			);
-
-			/**
-			 * Register a setting and its sanitization callback.
-			 * This is part of the Settings API, which lets you automatically generate
-			 * wp-admin settings pages by registering your settings and using a few
-			 * callbacks to control the output.
-			 */
-			register_setting(
-				'head_footer_code_settings', // Option group.
-				'auhfc_settings_homepage',    // Option name.
-				array(
-					'sanitize_callback' => array( $this, 'sanitize_homepage' ),
-				)
-			);
-		} // END condition: $auhfc_homepage_blog_posts
+		} // END condition: $homepage_blog_posts
 
 		/**
 		 * Settings Sections are the groups of settings you see on WordPress settings pages
@@ -389,7 +426,7 @@ class Settings {
 			'head_footer_code_settings_article',                           // Id.
 			esc_html__( 'Article specific settings', 'head-footer-code' ), // Title.
 			array( $this, 'article_settings_section_description' ),        // Callback.
-			HFC_PLUGIN_SLUG                                                // Page.
+			$this->plugin->slug                                            // Page.
 		);
 
 		// Prepare clean list of post types w/o attachment.
@@ -412,7 +449,33 @@ class Settings {
 				'items'       => $clean_post_types,
 				'description' => esc_html__( 'Choose the post types that will have an article specific section.', 'head-footer-code' )
 								. '<br>'
-								. esc_html__( 'Note that if you add head, body, and footer code for individual articles and then disable that post type, the article-specific code will no longer be output and only the site-wide code will be used.', 'head-footer-code' ),
+								. esc_html__( 'Please note, if you add head, body, and footer code for individual articles and then disable that post type, the article-specific code will no longer be output and only the site-wide code will be used.', 'head-footer-code' ),
+				'class'       => 'checkbox',
+			)
+		);
+
+		// Prepare list of public taxonomies, including built-in ones
+		$public_taxonomies = get_taxonomies( array( 'public' => true ), 'objects' );
+		$clean_taxonomies  = array();
+		foreach ( $public_taxonomies as $tax_slug => $tax_object ) {
+			// Skip specific eg. nav_menu, post_format
+			if ( in_array( $tax_slug, array( 'nav_menu', 'post_format' ), true ) ) {
+				continue;
+			}
+
+			$clean_taxonomies[ $tax_slug ] = esc_html( $tax_object->label ) . ' (' . esc_attr( $tax_slug ) . ')';
+		}
+		$this->add_field(
+			'taxonomies',                                   // Field key.
+			esc_html__( 'Taxonomies', 'head-footer-code' ), // Title.
+			'checkbox_group_field_render',                  // Callback method name.
+			'article',                                      // Section.
+			array(                                          // Arguments.
+				'label_for'   => false,
+				'items'       => $clean_taxonomies,
+				'description' => esc_html__( 'Choose the taxonomies that will have a taxonomy specific section.', 'head-footer-code' )
+								. '<br>'
+								. esc_html__( 'Please note, if you add head, body, and footer code for individual taxonomy and then disable that taxonomy, the txonomy-specific code will no longer be output and only the site-wide code will be used.', 'head-footer-code' ),
 				'class'       => 'checkbox',
 			)
 		);
@@ -425,36 +488,22 @@ class Settings {
 			array(                                                    // Arguments.
 				'label_for'   => false,
 				'items'       => array(
-					'editor' => __( 'Editor' ),
-					'author' => __( 'Author' ),
+					'editor' => __( 'Editor', 'head-footer-code' ),
+					'author' => __( 'Author', 'head-footer-code' ),
 				),
-				'description' => esc_html__( 'Choose which unprivileged user roles can manage article-specific and category-specific code.', 'head-footer-code' )
+				'description' => esc_html__( 'Choose which unprivileged user roles can manage article-specific and taxonomy-specific code.', 'head-footer-code' )
 								. '<br>'
 								. '<span class="warn"><strong>'
 								. esc_html__( 'Security Notice', 'head-footer-code' )
 								. '</strong><br>'
-								. '<i></i>' . esc_html__( 'Granting access to non-administrator roles (e.g., Editors) allows users to inject raw HTML, CSS, and JavaScript into individual posts and pages, and categories!', 'head-footer-code' )
+								. '<i></i>' . esc_html__( 'Granting access to non-administrator roles (e.g., Editors) allows users to inject raw HTML, CSS, and JavaScript into individual posts and pages, and taxonomies!', 'head-footer-code' )
 								. '<br><i></i>' . esc_html__( 'This may pose a security risk if those users are not fully trusted!', 'head-footer-code' )
 								. '<br><i></i>' . esc_html__( 'Only allow for roles you trust to handle code responsibly!', 'head-footer-code' )
 								. '</span>',
 				'class'       => 'checkbox',
 			)
 		);
-
-		/**
-		 * Register a setting and its sanitization callback.
-		 * This is part of the Settings API, which lets you automatically generate
-		 * wp-admin settings pages by registering your settings and using a few
-		 * callbacks to control the output.
-		 */
-		register_setting(
-			'head_footer_code_settings', // Option group.
-			'auhfc_settings_article',    // Option name.
-			array(
-				'sanitize_callback' => array( $this, 'sanitize_article' ),
-			)
-		);
-	} // END public function settings_init
+	}
 
 	/**
 	 * Wrapper for add_settings_field
@@ -497,7 +546,7 @@ class Settings {
 			'auhfc_' . $key,
 			$title,
 			array( $this, $callback_name ),
-			HFC_PLUGIN_SLUG,
+			$this->plugin->slug,
 			'head_footer_code_settings_' . $section,
 			$args
 		);
@@ -536,7 +585,13 @@ class Settings {
 		$rows        = isset( $args['rows'] ) ? $args['rows'] : 7;
 
 		// Compose input HTML.
-		$html  = '<div class="description">' . $this->security_risk_notice . '</div>';
+
+		$html  = '<div class="description">';
+		$html .= '<p class="notice notice-warning">';
+		$html .= '<strong>' . esc_html( $this->security_risk_notice['title'] ) . '</strong> ';
+		$html .= esc_html( $this->security_risk_notice['message'] );
+		$html .= '</p></div>';
+
 		$html .= sprintf(
 			'<textarea name="%1$s" id="%2$s" rows="%3$s" class="%4$s" title="%5$s">%6$s</textarea>',
 			esc_attr( $field ),       // 1
@@ -563,7 +618,7 @@ class Settings {
 		if ( is_callable( array( 'Filter_Embedded_HTML_Objects', 'maybe_create_links' ) ) ) {
 			add_filter( 'pre_kses', array( 'Filter_Embedded_HTML_Objects', 'maybe_create_links' ), 100 );
 		}
-	} // END public function textarea_field_render
+	}
 
 	/**
 	 * This function provides number input for settings fields
@@ -603,7 +658,7 @@ class Settings {
 
 		// Filter allowed HTML tags and attributes.
 		echo wp_kses( $html, $this->form_allowed_html );
-	} // END public function number_field_render
+	}
 
 	/**
 	 * This function provides checkbox group for settings fields
@@ -648,7 +703,7 @@ class Settings {
 
 		// Filter allowed HTML tags and attributes.
 		echo wp_kses( $html, $this->form_allowed_html );
-	} // END public function checkbox_group_field_render
+	}
 
 	/**
 	 * This function provides select for settings fields
@@ -697,28 +752,28 @@ class Settings {
 
 		// Filter allowed HTML tags and attributes.
 		echo wp_kses( $html, $this->form_allowed_html );
-	} // END public function select_field_render
+	}
 
 	/**
 	 * Print description for site-wide section
 	 */
 	public function sitewide_settings_section_description() {
 		echo '<p>' . esc_html__( 'Define site-wide code and behavior. You can Add custom content like JavaScript, CSS, HTML meta and link tags, Google Analytics, site verification, etc.', 'head-footer-code' ) . '</p>';
-	} // END public function sitewide_settings_section_description
+	}
 
 	/**
 	 * Print description for homepage section
 	 */
 	public function homepage_settings_section_description() {
 		echo '<p>' . esc_html__( 'Define code and behavior for the Homepage in Blog Posts mode.', 'head-footer-code' ) . '</p>';
-	} // END public function homepage_settings_section_description
+	}
 
 	/**
 	 * Print description for article section
 	 */
 	public function article_settings_section_description() {
 		echo '<p>' . esc_html__( 'Define what post types will support article specific features, and which non-priviledged user roles will have access to it.', 'head-footer-code' ) . '</p>';
-	} // END public function article_settings_section_description
+	}
 
 	/**
 	 * Print settings page from template
@@ -728,8 +783,8 @@ class Settings {
 			wp_die( esc_html__( 'You do not have sufficient permissions to access this page.', 'head-footer-code' ) );
 		}
 		// Render the settings template.
-		include HFC_DIR . '/templates/settings.php';
-	} // END public function options_page
+		include $this->plugin->dir . '/templates/settings.php';
+	}
 
 	/**
 	 * Append Settings link for Plugins page
@@ -739,10 +794,10 @@ class Settings {
 	 * @return array        Array of plugin links with appended link for Settings page
 	 */
 	public function plugin_settings_link( $links ) {
-		$settings_link = '<a href="' . esc_url( admin_url( 'tools.php?page=' . HFC_PLUGIN_SLUG ) ) . '">' . esc_html__( 'Settings', 'head-footer-code' ) . '</a>';
+		$settings_link = '<a href="' . esc_url( admin_url( 'tools.php?page=' . $this->plugin->slug ) ) . '">' . esc_html__( 'Settings', 'head-footer-code' ) . '</a>';
 		array_unshift( $links, $settings_link );
 		return $links; // Return updated array of links
-	} // END public function plugin_settings_link
+	}
 
 	/**
 	 * Add link to plugin community support
@@ -753,13 +808,24 @@ class Settings {
 	 * @return array       Array of default plugin meta links with appended link for Support community forum
 	 */
 	public function add_plugin_meta_links( $links, $file ) {
-		if ( plugin_basename( HFC_FILE ) === $file ) {
+		if ( $this->plugin->basename === $file ) {
 			$links[] = '<a href="https://wordpress.org/support/plugin/head-footer-code/" target="_blank">' . esc_html__( 'Support', 'head-footer-code' ) . '</a>';
 		}
 
 		// Return updated array of links
 		return $links;
-	} // END public function add_plugin_meta_links
+	}
+
+	/**
+	 * Set custom footer thankyou text on plugin settings page
+	 *
+	 * @param string $text Default WordPress admin footer thankyou text
+	 *
+	 * @return string Custom Head & Footer Code review CTA text
+	 */
+	public function custom_footer_thankyou( $text ) {
+		return '<span id="footer-thankyou">If you ♥ <strong>Head & Footer Code</strong> please leave us a <a target="_blank" rel="nofollow" href="https://wordpress.org/support/plugin/head-footer-code/reviews/#new-post">★★★★★</a> rating. A huge thanks in advance!</span>';
+	}
 
 	/**
 	 * Function to print note for head section
@@ -769,22 +835,12 @@ class Settings {
 			/* translators: 1: italicized 'unseen elements', 2: <script>, 3: <style>, 4: italicized sentence 'could break layouts or lead to unexpected situations' */
 			esc_html__( 'Usage of this field should be reserved for output of %1$s like %2$s and %3$s tags or additional metadata. It should not be used to add arbitrary HTML content to a page that %4$s.', 'head-footer-code' ),
 			'<em>' . esc_html__( 'unseen elements', 'head-footer-code' ) . '</em>',
-			Common::html2code( '<script>' ),
-			Common::html2code( '<style>' ),
+			Common::format_as_code( '<script>' ),
+			Common::format_as_code( '<style>' ),
 			'<em>' . esc_html__( 'could break layouts or lead to unexpected situations', 'head-footer-code' ) . '</em>'
 		) . '</p>';
-	} // END public function head_note
+	}
 
-	/**
-	 * Function to print note for body section
-	 */
-	public function body_note() {
-		return '<p class="notice">' . sprintf(
-			/* translators: %s will be replaced with a link to wp_body_open page on WordPress.org */
-			esc_html__( 'Make sure that your active theme support %s hook.', 'head-footer-code' ),
-			'<a href="https://developer.wordpress.org/reference/hooks/wp_body_open/" target="_hook">wp_body_open</a>'
-		) . '</p>';
-	} // END public function body_note
 
 	/**
 	 * Sanitize SiteWide settings
@@ -835,6 +891,7 @@ class Settings {
 	public function sanitize_article( $options ) {
 		$sanitized = array(
 			'post_types'    => array(),
+			'taxonomies'    => array(),
 			'allowed_roles' => array(),
 		);
 
@@ -846,6 +903,18 @@ class Settings {
 				$post_type = sanitize_key( $post_type );
 				if ( isset( $registered_post_types[ $post_type ] ) ) {
 					$sanitized['post_types'][] = $post_type;
+				}
+			}
+		}
+
+		// Sanitize Article Taxonomies (allow only registered public taxonomies)
+		if ( ! empty( $options['taxonomies'] ) && is_array( $options['taxonomies'] ) ) {
+			$registered_taxonmies = get_taxonomies( array( 'public' => true ) );
+
+			foreach ( $options['taxonomies'] as $taxonomy ) {
+				$taxonomy = sanitize_key( $taxonomy );
+				if ( isset( $registered_taxonmies[ $taxonomy ] ) ) {
+					$sanitized['taxonomies'][] = $taxonomy;
 				}
 			}
 		}
@@ -864,4 +933,4 @@ class Settings {
 
 		return $sanitized;
 	}
-} // END class Settings
+}
