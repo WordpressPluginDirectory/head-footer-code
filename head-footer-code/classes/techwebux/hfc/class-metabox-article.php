@@ -77,15 +77,16 @@ class Metabox_Article {
 	 * @return void
 	 */
 	public function form( $post ) {
-		/** @var string $form_scope Used in ../templates/hfc-form.php */
+		/** @var string $form_scope Used in templates/hfc-form.php */
 		$auhfc_form_scope = esc_html__( 'article specific', 'head-footer-code' );
 
+		/** @var array $auhfc_security_risk_notice Used in templates/hfc-form.php */
 		$auhfc_security_risk_notice = Common::get_security_risk_notice();
 
 		$post_id = $post->ID;
 
 		// Get article specific postmeta.
-		/** @var array $auhfc_form_data Used in ../templates/hfc-form.php */
+		/** @var array $auhfc_form_data Used in templates/hfc-form.php */
 		$auhfc_form_data = array(
 			'behavior' => Common::get_post_meta( 'behavior', $post_id ),
 			'head'     => Common::get_post_meta( 'head', $post_id ),
@@ -118,12 +119,16 @@ class Metabox_Article {
 		 * 1. we have nonce
 		 * 2. nonce is valid
 		 * 3. user has permission to edit post
-		 * 4. we have AUHFC fields as an array
+		 * 4. user's role is allowed to manage HFC (defense-in-depth: the metabox/save hooks
+		 *    are only wired up for allowed roles in Main::plugins_loaded(), but we re-check
+		 *    here so this handler stays safe on its own, independent of hook wiring)
+		 * 5. we have AUHFC fields as an array
 		*/
 		if (
 			empty( $nonce )
 			|| ! wp_verify_nonce( $nonce, '_head_footer_code_nonce' )
 			|| ! current_user_can( 'edit_post', $post_id )
+			|| ! Common::user_has_allowed_role()
 			|| empty( $_POST['auhfc'] )
 			|| ! is_array( $_POST['auhfc'] )
 		) {
@@ -131,7 +136,15 @@ class Metabox_Article {
 		}
 
 		// Sanitize data and update post meta.
-		$data = Common::sanitize_hfc_data( $_POST['auhfc'] );
+		// Unslash first: WP adds magic-quotes slashes to all superglobals, and this raw
+		// custom JS/CSS/HTML content must not carry them into sanitize_hfc_data() or they
+		// interfere with its wp_kses()/regex-based sanitization.
+		// The update_post_meta() below still needs wp_slash( $data ) - core's update_metadata()
+		// and add_metadata() internally call wp_unslash() on the value we pass them and
+		// wp_slash() here cancels that out so the stored value matches this sanitized data exactly.
+		// See Common::get_meta() for the matching note on the read side (no stripslashes there
+		// as it would double-unslash).
+		$data = Common::sanitize_hfc_data( wp_unslash( $_POST['auhfc'] ) ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Sanitized inside Common::sanitize_hfc_data() via sanitize_html_with_scripts()/wp_kses(), not here.
 		update_post_meta( $post_id, $this->plugin->meta_key, wp_slash( $data ) );
 	}
 }

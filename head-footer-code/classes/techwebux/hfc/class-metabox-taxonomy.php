@@ -23,6 +23,7 @@ class Metabox_Taxonomy {
 	/** @var Plugin_Info Plugin metadata object. */
 	protected $plugin;
 
+	/** @var string[] Taxonomy slugs this metabox is registered for. */
 	protected $taxonomies;
 
 	/**
@@ -62,12 +63,13 @@ class Metabox_Taxonomy {
 			: esc_html__( 'taxonomy', 'head-footer-code' );
 
 		// Get taxonomy name
-		$term_name = $term_object->name; // or $term_object->slug
+		$term_name = $term_object->name;
 
 		/** @var string $form_scope Used in templates/hfc-form.php */
 		$auhfc_form_scope = esc_html( "{$term_name} {$taxonomy_label} " )
 			. esc_html__( 'specific', 'head-footer-code' );
 
+		/** @var array $auhfc_security_risk_notice Used in templates/hfc-form.php */
 		$auhfc_security_risk_notice = Common::get_security_risk_notice();
 
 		$term_id  = isset( $term_object->term_id ) ? (int) $term_object->term_id : 0;
@@ -92,6 +94,8 @@ class Metabox_Taxonomy {
 
 	/**
 	 * Function to update taxonomy meta
+	 *
+	 * @param int $term_id Term ID.
 	 */
 	public function save( $term_id ) {
 		if ( ! isset( $_POST['auhfc'] ) ) {
@@ -99,7 +103,7 @@ class Metabox_Taxonomy {
 		}
 
 		// Get taxonomy from form.
-		$taxonomy = isset( $_POST['taxonomy'] ) ? sanitize_text_field( $_POST['taxonomy'] ) : '';
+		$taxonomy = isset( $_POST['taxonomy'] ) ? sanitize_text_field( wp_unslash( $_POST['taxonomy'] ) ) : '';
 
 		// Bail if current taxonomy is not among allowed in plugin settings.
 		if ( ! in_array( $taxonomy, $this->taxonomies, true ) ) {
@@ -119,9 +123,16 @@ class Metabox_Taxonomy {
 			return;
 		}
 
-		// Dynamic capability check
+		// Dynamic capability check.
 		$tax_obj = get_taxonomy( $taxonomy );
 		if ( ! $tax_obj || ! current_user_can( $tax_obj->cap->edit_terms, $term_id ) ) {
+			return;
+		}
+
+		// Defense-in-depth: the save hook is only wired up for allowed roles in
+		// Main::plugins_loaded(), but we re-check here so this handler stays safe
+		// on its own, independent of hook wiring.
+		if ( ! Common::user_has_allowed_role() ) {
 			return;
 		}
 
@@ -132,12 +143,23 @@ class Metabox_Taxonomy {
 		}
 
 		// Sanitize data and update term meta.
-		$data = Common::sanitize_hfc_data( $_POST['auhfc'] );
+		// Unslash first: WP adds magic-quotes slashes to all superglobals, and this raw
+		// custom JS/CSS/HTML content must not carry them into sanitize_hfc_data() or they
+		// interfere with its wp_kses()/regex-based sanitization.
+		// The update_term_meta() below still needs wp_slash( $data ) - core's update_metadata()
+		// and add_metadata() internally call wp_unslash() on the value we pass them and
+		// wp_slash() here cancels that out so the stored value matches this sanitized data exactly.
+		// See Common::get_meta() for the matching note on the read side (no stripslashes there
+		// as it would double-unslash).
+		$data = Common::sanitize_hfc_data( wp_unslash( $_POST['auhfc'] ) ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Sanitized inside Common::sanitize_hfc_data() via sanitize_html_with_scripts()/wp_kses(), not here.
 		update_term_meta( $term_id, $this->plugin->meta_key, wp_slash( $data ) );
 	}
 
 	/**
 	 * Generates the nonce field name for a given taxonomy.
+	 *
+	 * @param string $taxonomy Taxonomy slug.
+	 * @return string Nonce field name.
 	 */
 	private function get_nonce_name( $taxonomy ) {
 		return "auhfc_{$taxonomy}_nonce";
@@ -145,6 +167,9 @@ class Metabox_Taxonomy {
 
 	/**
 	 * Generates the nonce action string for a given taxonomy.
+	 *
+	 * @param string $taxonomy Taxonomy slug.
+	 * @return string Nonce action name.
 	 */
 	private function get_nonce_action( $taxonomy ) {
 		return "auhfc_{$taxonomy}_save_action";

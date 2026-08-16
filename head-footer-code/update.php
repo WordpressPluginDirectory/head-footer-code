@@ -25,7 +25,7 @@ function auhfc_update() {
 	$current_db_ver = get_option( 'auhfc_db_ver', 0 );
 
 	// Get the target version that we need to reach.
-	$target_db_ver = HFC_VER_DB;
+	$target_db_ver = TECHWEBUX_HFC_VER_DB;
 
 	// Run update routines one by one until the current version number
 	// reaches the target version number.
@@ -253,54 +253,92 @@ function auhfc_update_9() {
 /**
  * Migration for v. 1.5.3
  * Clean up double slashes from existing meta data caused by previous double-slashing.
+ * Processes 500 records at a time and stays on DB version 9 until
+ * all records are cleaned to prevent timeouts and memory exhaustion.
  */
 function auhfc_update_10() {
 	global $wpdb;
 
-	$meta_key = '_auhfc';
+	$meta_key   = '_auhfc';
+	$batch_size = 500;
+	$has_more   = false;
 
 	/**
-	 * Strip slashes from Post Metas
-	 * We use direct SQL to fetch all IDs at once to avoid N+1 query issues
-	 * and memory exhaustion on large databases.
+	 * Strip slashes from Post Metas when actually contain backslashes (\\) in meta_value.
+	 *
+	 * Direct query by design: this is a one-time, batched data-repair migration that must
+	 * scan the raw meta_value with LIKE, including any orphaned postmeta rows (e.g. left
+	 * behind by a deleted post) that a WP_Query/get_posts()-based meta_query would silently
+	 * skip because it inner-joins against wp_posts. Caching does not apply because each row
+	 * found here is immediately rewritten (or the batch completes) - there is nothing to
+	 * cache between runs.
 	 */
+	// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- See docblock above: one-time batched migration, must catch orphaned meta rows, nothing cacheable between runs.
 	$post_metas = $wpdb->get_results(
 		$wpdb->prepare(
-			"SELECT post_id, meta_value FROM $wpdb->postmeta WHERE meta_key = %s",
-			$meta_key
+			"SELECT post_id, meta_value FROM $wpdb->postmeta
+			WHERE meta_key = %s AND meta_value LIKE %s
+			LIMIT %d",
+			$meta_key,
+			'%' . $wpdb->esc_like( '\\' ) . '%',
+			$batch_size
 		)
 	);
 
 	if ( ! empty( $post_metas ) ) {
+		$has_more = true;
 		foreach ( $post_metas as $meta ) {
 			$original_data = maybe_unserialize( $meta->meta_value );
 
 			if ( is_array( $original_data ) ) {
 				$cleaned_data = stripslashes_deep( $original_data );
-				update_post_meta( $meta->post_id, $meta_key, wp_slash( $cleaned_data ) );
+				if ( $cleaned_data !== $original_data ) {
+					update_post_meta( $meta->post_id, $meta_key, wp_slash( $cleaned_data ) );
+				}
 			}
 		}
 	}
 
 	/**
-	 * Strip slashes from Taxonomies (Categories at the moment)
+	 * Strip slashes from Taxonomies (Terms) within available batch capacity.
+	 *
+	 * Direct query by design - same reasoning as the postmeta query above: one-time batched
+	 * migration that must catch orphaned termmeta rows via LIKE, with nothing to cache.
 	 */
-	$term_metas = $wpdb->get_results(
-		$wpdb->prepare(
-			"SELECT term_id, meta_value FROM $wpdb->termmeta WHERE meta_key = %s",
-			$meta_key
-		)
-	);
+	if ( count( $post_metas ) < $batch_size ) {
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- See docblock above: one-time batched migration, must catch orphaned meta rows, nothing cacheable between runs.
+		$term_metas = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT term_id, meta_value FROM $wpdb->termmeta
+				WHERE meta_key = %s AND meta_value LIKE %s
+				LIMIT %d",
+				$meta_key,
+				'%' . $wpdb->esc_like( '\\' ) . '%',
+				$batch_size - count( $post_metas )
+			)
+		);
 
-	if ( ! empty( $term_metas ) ) {
-		foreach ( $term_metas as $meta ) {
-			$original_data = maybe_unserialize( $meta->meta_value );
+		if ( ! empty( $term_metas ) ) {
+			$has_more = true;
+			foreach ( $term_metas as $meta ) {
+				$original_data = maybe_unserialize( $meta->meta_value );
 
-			if ( is_array( $original_data ) ) {
-				$cleaned_data = stripslashes_deep( $original_data );
-				update_term_meta( $meta->term_id, $meta_key, wp_slash( $cleaned_data ) );
+				if ( is_array( $original_data ) ) {
+					$cleaned_data = stripslashes_deep( $original_data );
+					if ( $cleaned_data !== $original_data ) {
+						update_term_meta( $meta->term_id, $meta_key, wp_slash( $cleaned_data ) );
+					}
+				}
 			}
 		}
+	}
+
+	/**
+	 * Revert DB version if there is more work in batches so
+	 * Main::plugins_loaded() triggers this function again until completion.
+	 */
+	if ( $has_more ) {
+		update_option( 'auhfc_db_ver', 9 );
 	}
 }
 
